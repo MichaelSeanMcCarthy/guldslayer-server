@@ -5052,7 +5052,7 @@ function loadPeerJS(){                                   // fetch the PeerJS lib
 }
 const METERED_APP='';                                    // optional: your own metered.ca app name…
 const METERED_KEY='';                                    // …and API key, for a private TURN relay
-const SERVER_URL='';                                     // optional: a dedicated server, e.g. 'wss://guldslayer.up.railway.app' — adds a Play Online button
+const SERVER_URL='wss://guldslayer-server-production.up.railway.app';   // the always-on dedicated server — adds a Play Online button
 function netJoinWS(url){                                 // join an always-on dedicated server over a plain WebSocket
   if(net.mode!=='off') return;
   url=(url||'').trim(); if(!url) return;
