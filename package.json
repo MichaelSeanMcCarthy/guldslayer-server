@@ -1,0 +1,13 @@
+{
+  "name": "guldslayer-server",
+  "version": "1.0.0",
+  "description": "Always-on dedicated server for GuldSlayer — runs the game simulation headlessly and serves players over WebSockets.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
