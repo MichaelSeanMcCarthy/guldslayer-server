@@ -4765,7 +4765,7 @@ window.addEventListener('resize', resize);
 /* --- default view: centre on the player at 250% zoom --- */
 function setDefaultView(){
   recomputeZoomLimits();
-  cam.scale = Math.min(maxScale, fitScale*10);   // ride close — twice the old default
+  cam.scale = Math.min(maxScale, fitScale*15);   // ride close — 1.5x closer again than the 2x view
   camFollow=true;
   const p=projOf(player.px, player.py);
   cam.ox = p.x - (canvas.width/2)/cam.scale;
