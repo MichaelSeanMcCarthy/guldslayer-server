@@ -3176,8 +3176,25 @@ function drawTimeHUD(){                        // the day dial: a 24-hour sky ba
   ctx.fillText((hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm, bx+bw, by+bh+ic*0.25);
   ctx.restore();
 }
+function drawZoomHUD(){                        // zoom factor read-out, top-centre (factor = cam.scale / fitScale)
+  const zf=cam.scale/Math.max(0.0001, fitScale);
+  const ic=Math.max(13, 14*DPR), cx=canvas.width/2, y=Math.max(10, 12*DPR)+ic*0.7;
+  const label=zf.toFixed(1)+'×';
+  ctx.save(); ctx.font='bold '+Math.round(ic*1.1)+'px system-ui, sans-serif';
+  const tw=ctx.measureText(label).width, padX=ic*0.7, bw=tw+ic*1.7+padX*2, bh=ic*1.7;
+  ctx.globalAlpha=0.85; ctx.fillStyle='rgba(20,14,9,.72)';
+  ctx.beginPath(); ctx.roundRect(cx-bw/2, y-bh/2, bw, bh, bh/2); ctx.fill();
+  ctx.globalAlpha=1; ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1.5, DPR*1.2); ctx.stroke();
+  const gx=cx-bw/2+padX+ic*0.55, gy=y;                          // little magnifier
+  ctx.strokeStyle='#f4e7cf'; ctx.lineWidth=Math.max(1.6, DPR*1.5);
+  ctx.beginPath(); ctx.arc(gx-ic*0.12, gy-ic*0.12, ic*0.36, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(gx+ic*0.14, gy+ic*0.14); ctx.lineTo(gx+ic*0.4, gy+ic*0.4); ctx.stroke();
+  ctx.fillStyle='#f4e7cf'; ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText(label, gx+ic*0.65, gy+DPR*0.5);
+  ctx.restore();
+}
 /* --- minimap: the world from on high, cached per map and cropped around the hero --- */
-let mmCanvas=null, mmFor='';
+let mmCanvas=null, mmFor='', mmZoom=1, mmBtns=null;
 function buildMinimap(){                       // paint one pixel block per cell into an offscreen canvas
   const PX=4, c=document.createElement('canvas'); c.width=GRID*PX; c.height=GRID*PX;
   const g=c.getContext('2d');
@@ -3213,8 +3230,9 @@ function drawMinimap(){
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
   const box=Math.max(140, 150*DPR);
   const bx=canvas.width-pad-box, by=pad+sz+ic*3.6;
-  const PX=4, mmScale=(fitScale*5)/4;                          // the old default camera height, from 4x higher
-  const pxPerCell=mmScale*CELL, viewCells=box/pxPerCell;
+  const PX=4, mmScale=(fitScale*5)/4*mmZoom;                   // the old default camera height, from 4x higher (± the +/- buttons)
+  let pxPerCell=mmScale*CELL, viewCells=box/pxPerCell;
+  if(viewCells>GRID){ viewCells=GRID; pxPerCell=box/viewCells; }   // fully zoomed out: the whole world fits the box
   let cx0=cellOf(player.px)-viewCells/2, cy0=cellOf(player.py)-viewCells/2;
   cx0=Math.max(0, Math.min(GRID-viewCells, cx0)); cy0=Math.max(0, Math.min(GRID-viewCells, cy0));
   ctx.save();
@@ -3235,6 +3253,28 @@ function drawMinimap(){
   ctx.restore();
   ctx.save(); ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(2, DPR*1.8);
   ctx.beginPath(); ctx.roundRect(bx, by, box, box, 8*DPR); ctx.stroke(); ctx.restore();
+  // +/- buttons riding the minimap's bottom edge
+  const bs=Math.max(24, 26*DPR), bg=bs*0.25;
+  mmBtns={ minus:{x:bx+box-bs*2-bg-4*DPR, y:by+box-bs-4*DPR, w:bs, h:bs},
+           plus: {x:bx+box-bs-4*DPR,      y:by+box-bs-4*DPR, w:bs, h:bs} };
+  ctx.save();
+  for(const [k,b] of Object.entries(mmBtns)){
+    ctx.globalAlpha=0.9; ctx.fillStyle='rgba(20,14,9,.8)';
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 5*DPR); ctx.fill();
+    ctx.globalAlpha=1; ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1.5, DPR*1.3); ctx.stroke();
+    ctx.strokeStyle='#f4e7cf'; ctx.lineWidth=Math.max(2, DPR*1.8);
+    const cx2=b.x+b.w/2, cy2=b.y+b.h/2, ar=b.w*0.24;
+    ctx.beginPath(); ctx.moveTo(cx2-ar, cy2); ctx.lineTo(cx2+ar, cy2); ctx.stroke();
+    if(k==='plus'){ ctx.beginPath(); ctx.moveTo(cx2, cy2-ar); ctx.lineTo(cx2, cy2+ar); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+function mmButtonTap(x, y){                     // a tap on the minimap's +/- : zoom the little map
+  if(!mmBtns || scene!=='game') return false;
+  const hit=b=> x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h;
+  if(hit(mmBtns.plus)) { mmZoom=Math.min(4,    mmZoom*1.35); return true; }
+  if(hit(mmBtns.minus)){ mmZoom=Math.max(0.25, mmZoom/1.35); return true; }
+  return false;
 }
 function drawGuldHUD(){                        // your GULD purse, tucked under the portrait
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR);
@@ -3638,6 +3678,7 @@ function draw(){
     drawGuldHUD();            // GULD purse under the portrait
   drawTimeHUD();            // the day dial — sun and moon riding the sky band
   drawMinimap();            // the world from on high, below the dial
+  drawZoomHUD();            // zoom factor read-out, top-centre
 }
 function drawHurtFlash(){
   if(player.hurtT<=0) return;
@@ -4698,7 +4739,8 @@ canvas.addEventListener('pointermove', (ev)=>{
   const c=evToCanvas(ev); pointers.set(ev.pointerId, c);
   if(pinching && pointers.size>=2){
     const p=[...pointers.values()]; const nd=dist(p[0],p[1]), nm=mid(p[0],p[1]);
-    panBy(nm.x-pinchMid.x, nm.y-pinchMid.y);   // two-finger drag pans; zoom is locked
+    if(pinchDist>0) zoomAt(nm.x, nm.y, nd/pinchDist);   // pinch zooms again — the meter shows the factor
+    panBy(nm.x-pinchMid.x, nm.y-pinchMid.y);            // two-finger drag also pans
     camFollow=false;
     pinchDist=nd; pinchMid=nm; return;
   }
@@ -4723,8 +4765,9 @@ function endPointer(ev){
       else if(invUI.open){ invUIClick(c.x, c.y); }   // inventory screen captures the tap
       else {
         let hitTool=false;
+        if(mmButtonTap(c.x, c.y)) hitTool=true;                                                      // minimap +/- buttons
         const IB=invButtonBox();
-        if(c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
+        if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
         for(const b of toolButtons()){ if(hitTool) break; if(c.x>=b.x&&c.x<=b.x+b.w&&c.y>=b.y&&c.y<=b.y+b.h){
           if(b.group==='food'){ eatFood(b.key); hitTool=true; break; }                                // food buttons eat, they don't equip
           player.tool = player.tool===b.key ? null : b.key; setTool(player.tool); hitTool=true; break; } }
@@ -4746,8 +4789,12 @@ function endPointer(ev){
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
-// mouse wheel : zoom is locked (the camera rides close; the minimap gives the overview)
-canvas.addEventListener('wheel', (ev)=>{ ev.preventDefault(); }, {passive:false});
+// mouse wheel : zoom anchored on cursor (the meter up top reads out the factor)
+canvas.addEventListener('wheel', (ev)=>{
+  ev.preventDefault();
+  const c=evToCanvas(ev);
+  zoomAt(c.x, c.y, ev.deltaY < 0 ? 1.12 : 1/1.12);
+}, {passive:false});
 
 // keyboard (no on-screen controls: zoom via wheel/pinch, pan via drag)
 document.addEventListener('keydown', (ev)=>{
