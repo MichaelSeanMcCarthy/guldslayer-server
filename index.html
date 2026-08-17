@@ -3426,6 +3426,31 @@ function draw(){
   for(const tt of turtles){ if(tt.state==='hidden') continue; items.push({wx:tt.px, wy:tt.py, kind:10, ref:tt}); }   // turtles (hidden ones are underwater)
   if(campfire) items.push({wx:(campfire.x+0.5)*CELL, wy:(campfire.y+0.5)*CELL, kind:5});
   for(const g of goblins){ if(g.gone) continue; items.push({wx:(g.px!=null?g.px:(g.x+0.5)*CELL), wy:(g.py!=null?g.py:(g.y+0.5)*CELL), kind:6, ref:g}); }
+  // target ring beneath the current objective — red for combat, blue for work (chop / harvest / loot).
+  // Computed here, DRAWN after the world so canopies and bodies never hide it.
+  let targetRing=null;
+  {
+    const u=CELL*cam.scale; let ring=null;
+    if(player.attack && player.attack.ref && !creatureDead(player.attack.kind, player.attack.ref)){
+      const tp=creaturePos(player.attack.kind, player.attack.ref), ref=player.attack.ref;
+      ring={ x:tp.x, y:tp.y, rr:(ref.size>=2 ? u*1.5 : ref.big ? u*0.85 : ref.antlers ? u*0.68 : ref.fawn ? u*0.4 : u*0.55), col:'214,58,42' };
+    }
+    else if(player.chopTree && world.trees.includes(player.chopTree)){                  // felling a tree (2x2 footprint)
+      const t=player.chopTree; ring={ x:(t.x+1)*CELL, y:(t.y+1.6)*CELL, rr:u*0.85, col:'74,140,255' };
+    }
+    else if(player.harvestTarget!=null){                                               // reaping a wheat plot
+      const k=player.harvestTarget, c=world.crops.get(k);
+      if(c && c.stage==='wheat') ring={ x:(k%GRID+0.5)*CELL, y:(((k/GRID)|0)+0.5)*CELL, rr:u*0.55, col:'74,140,255' };
+    }
+    else if(player.carcassTarget && player.carcassTarget.dead && !player.carcassTarget.gone){   // looting a deer carcass
+      const d2=player.carcassTarget; ring={ x:d2.px, y:d2.py, rr:(d2.antlers?u*0.68:d2.fawn?u*0.4:u*0.55), col:'74,140,255' };
+    }
+    else if(player.soulTarget && player.soulTarget.dead && !player.soulTarget.gone){    // drawing a soul from a fallen enemy
+      const gp2=creaturePos('goblin', player.soulTarget);
+      ring={ x:gp2.x, y:gp2.y, rr:(player.soulTarget.size>=2?u*1.5:u*0.55), col:'74,140,255' };
+    }
+    targetRing=ring;
+  }
   items.sort((a,b)=> a.wy - b.wy);
   const W=canvas.width, Hh=canvas.height;
   for(const it of items){
@@ -3465,6 +3490,16 @@ function draw(){
     else drawFallingTree(s, it.ref);
   }
 
+  if(targetRing){           // the objective ring rides above the world so nothing hides it
+    const u=CELL*cam.scale, ts=worldToScreen(targetRing.x, targetRing.y), rr=targetRing.rr, pulse=0.5+0.5*Math.sin(animT*6);
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(ts.x, ts.y+u*0.04, rr, rr*TILT, 0, 0, Math.PI*2);
+    ctx.fillStyle='rgba('+targetRing.col+','+(0.07+0.06*pulse).toFixed(3)+')'; ctx.fill();
+    ctx.lineWidth=Math.max(2, u*0.07); ctx.strokeStyle='rgba('+targetRing.col+','+(0.6+0.35*pulse).toFixed(3)+')'; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(ts.x, ts.y+u*0.04, rr*0.72, rr*0.72*TILT, 0, 0, Math.PI*2);   // inner ring, fainter
+    ctx.lineWidth=Math.max(1, u*0.03); ctx.strokeStyle='rgba('+targetRing.col+','+(0.3+0.2*pulse).toFixed(3)+')'; ctx.stroke();
+    ctx.restore();
+  }
   drawParticles();          // VFX on top of the world
   drawFloats();             // floating text (e.g. "+1 stamina")
   drawHurtFlash();          // red screen-edge flash when hurt
