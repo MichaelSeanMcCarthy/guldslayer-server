@@ -1159,7 +1159,7 @@ function updateSkeleton(s, dt){        // tracks & punches the nearest player to
   if(T.dead){ s.gpath=[]; return; }
   const pd=Math.hypot(cellOf(s.px)-cellOf(T.px), cellOf(s.py)-cellOf(T.py));
   s.hopAmt=0;
-  const reach=s.big?2:1.6, dmgS=s.big?8:5, spd=s.big?MOVE_SPEED*1.2:MOVE_SPEED*1.6;
+  const reach=s.big?2:1.6, dmgS=s.big?8:5, spd=(s.big?MOVE_SPEED*1.2:MOVE_SPEED*1.6)*0.5;   // the dead shamble at half pace
   if(pd<=reach){
     s.gpath=[]; s.face=face8(T.px-s.px, T.py-s.py); s.faceLeft=T.px<s.px;
     s.atkCD=(s.atkCD||0)-dt;
