@@ -1331,6 +1331,7 @@ function moveTo(wx, wy){
   const cells = findPath(scx,scy,dest.x,dest.y); if(!cells) return;
   player.path = cells.map(c=>({ x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL }));
   player.targetCell = dest;
+  camFollow=true;                                   // setting out — the camera falls back in behind the hero
 }
 function approachShop(){                            // walk to the front door, then open the shop
   player.tool=null; player.chopTree=null; player.chopping=false; player.attack=null; player.propTarget=null; player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null;
@@ -1752,7 +1753,7 @@ function startPunch(prop){                          // walk over to a crate/barr
 function pathToCell(cx,cy){
   const dest=nearestOpen(cx,cy); if(!dest) return;
   const cells=findPath(cellOf(player.px), cellOf(player.py), dest.x, dest.y);
-  if(cells){ player.path=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL})); player.targetCell=dest; }
+  if(cells){ player.path=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL})); player.targetCell=dest; camFollow=true; }
 }
 function updatePunch(dt){
   const p=player.propTarget; if(!p) return true;
@@ -3149,6 +3150,92 @@ function drawGuldIcon(x, y, s){                // the GULD crystal: a tall facet
   tri([x+s*0.12,y+s*0.28],[x+s*0.34,y+s*0.28],[x,y+s*0.55], '#c97e18');                        // deep base facet
   quad([x-s*0.34,y-s*0.22],[x-s*0.12,y-s*0.22],[x-s*0.12,y+s*0.28],[x-s*0.34,y+s*0.28], '#ffe484');  // left light facet
 }
+function drawTimeHUD(){                        // the day dial: a 24-hour sky band with the sun (or moon) riding it
+  const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
+  const bw=Math.max(120, 130*DPR), bh=Math.max(10, 11*DPR);
+  const bx=canvas.width-pad-bw, by=pad+sz+ic*2.1;
+  const h=dayHour(), frac=h/24;
+  ctx.save();
+  const grad=ctx.createLinearGradient(bx,0,bx+bw,0);           // midnight → dawn → noon → dusk → midnight
+  grad.addColorStop(0.0,'#141a3d'); grad.addColorStop(0.21,'#141a3d');
+  grad.addColorStop(0.27,'#d97b3f'); grad.addColorStop(0.38,'#7db4e8'); grad.addColorStop(0.62,'#7db4e8');
+  grad.addColorStop(0.73,'#d97b3f'); grad.addColorStop(0.79,'#141a3d'); grad.addColorStop(1.0,'#141a3d');
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, bh/2); ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1.5, DPR*1.4); ctx.stroke();
+  const mx=bx+bw*frac, my=by+bh/2, mr=bh*0.85;                 // the marker rides the band
+  const night=(h<6||h>=18);
+  if(night){ circle(mx, my, mr, '#e8ecf4'); circle(mx+mr*0.42, my-mr*0.28, mr*0.82, '#141a3d'); }   // crescent moon
+  else { circle(mx, my, mr*0.8, '#ffd44d');                                                          // beaming sun
+    ctx.strokeStyle='#ffd44d'; ctx.lineWidth=Math.max(1.4, DPR*1.3);
+    for(let i=0;i<8;i++){ const a=i*Math.PI/4+animT*0.4;
+      ctx.beginPath(); ctx.moveTo(mx+Math.cos(a)*mr*0.95, my+Math.sin(a)*mr*0.95);
+      ctx.lineTo(mx+Math.cos(a)*mr*1.35, my+Math.sin(a)*mr*1.35); ctx.stroke(); } }
+  const hh=Math.floor(h), mm=Math.floor((h-hh)*60);            // small clock under the band
+  ctx.fillStyle='rgba(244,231,207,.9)'; ctx.font='bold '+Math.round(ic*0.85)+'px system-ui, sans-serif';
+  ctx.textAlign='right'; ctx.textBaseline='top';
+  ctx.fillText((hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm, bx+bw, by+bh+ic*0.25);
+  ctx.restore();
+}
+/* --- minimap: the world from on high, cached per map and cropped around the hero --- */
+let mmCanvas=null, mmFor='';
+function buildMinimap(){                       // paint one pixel block per cell into an offscreen canvas
+  const PX=4, c=document.createElement('canvas'); c.width=GRID*PX; c.height=GRID*PX;
+  const g=c.getContext('2d');
+  for(let y=0;y<GRID;y++) for(let x=0;x<GRID;x++){
+    let col;
+    if(mapMode==='dungeon'){
+      const t=world.terrain[gi(x,y)];
+      col = t===1 ? '#101114' : (world.dzone&&world.dzone[gi(x,y)]===2 ? '#3d2f3a' : world.dzone&&world.dzone[gi(x,y)]===1 ? '#2c2e33' : '#26221e');
+    } else {
+      const t=world.terrain[gi(x,y)];
+      if(t===2||t===3||t===4) col = t===2?'#7ec8d8':t===3?'#4a9ec4':'#2c6ea8';       // water rings
+      else col='#6da24e';                                                             // grass
+    }
+    g.fillStyle=col; g.fillRect(x*PX, y*PX, PX, PX);
+  }
+  if(mapMode==='forest'){
+    g.fillStyle='#8a6a42'; for(const m of (world.pathDirt||[]).concat(world.campDirt||[], world.shopDirt||[])) g.fillRect(m.x*PX, m.y*PX, PX, PX);
+    g.fillStyle='#3e6b34'; for(const t of world.trees){ g.fillRect(t.x*PX, t.y*PX, PX*2, PX*2); }
+    g.fillStyle='#57904a'; for(const b of world.bushes){ g.fillRect(b.x*PX+1, b.y*PX+1, PX-1, PX-1); }
+    g.fillStyle='#8a5a34';
+    for(const s of [shop, stall, butcher, armorShop]){ if(s.placed) g.fillRect(s.x*PX, s.y*PX, s.w*PX, s.h*PX); }
+    if(henge.placed){ g.fillStyle='#9aa4ae'; g.fillRect((henge.cx-3)*PX, (henge.cy-3)*PX, 7*PX, 7*PX); }
+    if(cave.placed){ g.fillStyle='#5c5e61'; g.fillRect(cave.x*PX, cave.y*PX, 5*PX, 5*PX); }
+  } else if(dungeon.forge){
+    g.fillStyle='#d97b3f'; g.fillRect(dungeon.forge.x*PX, dungeon.forge.y*PX, PX*2, PX);
+    g.fillStyle='#b98be0'; g.fillRect(dungeon.throne.x*PX, dungeon.throne.y*PX, PX*2, PX*2);
+  }
+  mmCanvas=c; mmFor=mapMode;
+}
+function drawMinimap(){
+  if(scene!=='game') return;
+  if(!mmCanvas || mmFor!==mapMode) buildMinimap();
+  const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
+  const box=Math.max(140, 150*DPR);
+  const bx=canvas.width-pad-box, by=pad+sz+ic*3.6;
+  const PX=4, mmScale=(fitScale*5)/4;                          // the old default camera height, from 4x higher
+  const pxPerCell=mmScale*CELL, viewCells=box/pxPerCell;
+  let cx0=cellOf(player.px)-viewCells/2, cy0=cellOf(player.py)-viewCells/2;
+  cx0=Math.max(0, Math.min(GRID-viewCells, cx0)); cy0=Math.max(0, Math.min(GRID-viewCells, cy0));
+  ctx.save();
+  ctx.globalAlpha=0.92;
+  ctx.beginPath(); ctx.roundRect(bx, by, box, box, 8*DPR); ctx.clip();
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(mmCanvas, cx0*PX, cy0*PX, viewCells*PX, viewCells*PX, bx, by, box, box);
+  if(mapMode==='forest'){                                      // night falls on the little map too
+    const dark=nightDarkness(); if(dark>0.005){ ctx.fillStyle='rgba(13,17,46,'+(dark*0.8).toFixed(3)+')'; ctx.fillRect(bx,by,box,box); }
+  }
+  const dot=(wx,wy,r,col)=>{ const dx=bx+(wx/CELL-cx0)*pxPerCell, dy=by+(wy/CELL-cy0)*pxPerCell;
+    if(dx>=bx-2&&dx<=bx+box+2&&dy>=by-2&&dy<=by+box+2) circle(dx, dy, r, col); };
+  for(const RP of (typeof remotePlayers==='function'?remotePlayers():[])){                     // the rest of the party
+    if(RP.active && !RP.dead && (RP.map||'forest')===mapMode) dot(RP.px, RP.py, Math.max(2.5,3*DPR), '#6bd3ff'); }
+  for(const g of goblins){ if(g.dead||g.gone) continue;
+    if(g.kind==='boss'||g.kind==='king') dot(g.px, g.py, Math.max(3,3.5*DPR), '#d43a2a'); }    // the big threats
+  dot(player.px, player.py, Math.max(3,3.5*DPR), '#ffffff');                                   // you
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(2, DPR*1.8);
+  ctx.beginPath(); ctx.roundRect(bx, by, box, box, 8*DPR); ctx.stroke(); ctx.restore();
+}
 function drawGuldHUD(){                        // your GULD purse, tucked under the portrait
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR);
   const ic=Math.max(15, 17*DPR), y=pad+sz+ic*0.9;
@@ -3528,6 +3615,11 @@ function draw(){
     ctx.restore();
   }
   drawParticles();          // VFX on top of the world
+  if(mapMode==='forest'){   // the sky's mood washes over the meadow (the dungeon is forever torch-lit)
+    const warm=duskWarmth(), dark=nightDarkness();
+    if(warm>0.005) rect(0,0,canvas.width,canvas.height,'rgba(255,140,60,'+warm.toFixed(3)+')');
+    if(dark>0.005) rect(0,0,canvas.width,canvas.height,'rgba(13,17,46,'+dark.toFixed(3)+')');
+  }
   drawFloats();             // floating text (e.g. "+1 stamina")
   drawHurtFlash();          // red screen-edge flash when hurt
   drawChopTimer();          // countdown above a tree being chopped
@@ -3544,6 +3636,8 @@ function draw(){
   drawStamina();            // stamina meter, under the hearts
   drawHudFace();            // player portrait, top-right
     drawGuldHUD();            // GULD purse under the portrait
+  drawTimeHUD();            // the day dial — sun and moon riding the sky band
+  drawMinimap();            // the world from on high, below the dial
 }
 function drawHurtFlash(){
   if(player.hurtT<=0) return;
@@ -4463,6 +4557,24 @@ function drawHearts(){
 
 /* --- loop --- */
 let last=0, animT=0, fishTimer=6+Math.random()*10, smokeTimer=0, herdRespawnT=0;
+/* --- day & night: one full cycle in 8 minutes, shared by the whole party --- */
+const DAY_LEN=480;                                   // seconds per full day+night
+let worldTime=DAY_LEN*0.35;                          // begin mid-morning (~8:24)
+function dayHour(){ return ((worldTime%DAY_LEN)/DAY_LEN)*24; }   // 0..24, 12 = noon
+function smoothstep01(t){ t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
+function nightDarkness(){                            // 0 in daylight … 0.62 at deep night, smooth at the edges
+  const h=dayHour();
+  if(h>=7 && h<17) return 0;
+  if(h>=17 && h<20) return smoothstep01((h-17)/3)*0.62;   // dusk
+  if(h>=5 && h<7)  return (1-smoothstep01((h-5)/2))*0.62; // dawn
+  return 0.62;                                            // night
+}
+function duskWarmth(){                               // an orange wash that swells at sunset & sunrise
+  const h=dayHour();
+  const g=(c,w)=>Math.exp(-((h-c)*(h-c))/(2*w*w));
+  return 0.16*(g(18,0.9)+g(6,0.9));
+}
+let camFollow=true;                                  // camera trails the hero; dragging peeks, moving re-engages
 function respawnHerd(){                      // a fresh little herd wanders in east of the creek
   const minX=Math.max(2, Math.min(GRID-4, (world.creekMaxX!=null?world.creekMaxX:0)+2));
   let bc=null;
@@ -4476,6 +4588,13 @@ function respawnHerd(){                      // a fresh little herd wanders in e
     const c=nearestOpen(bc.x+((Math.random()*7)|0)-3, bc.y+((Math.random()*7)|0)-3) || bc;
     d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; herd.push(d); }
   for(const d of herd){ if(allDeer.length<DEER_CAP){ allDeer.push(d); deerWander(d); } }
+}
+function updateCamFollow(dt){                     // glide the camera after the hero (a drag pauses it; moving resumes it)
+  if(!camFollow || player.dead) return;
+  const pp=projOf(player.px, player.py);
+  const tx=pp.x-(canvas.width/2)/cam.scale, ty=pp.y-(canvas.height/2)/cam.scale;
+  const k=1-Math.exp(-dt*4);
+  cam.ox+=(tx-cam.ox)*k; cam.oy+=(ty-cam.oy)*k; clampCam();
 }
 function loop(ts){
   const dt=Math.min(0.05, ((ts-last)/1000)||0); last=ts; animT+=dt;
@@ -4508,6 +4627,8 @@ function loop(ts){
         pk2.taken=true; player.pickaxe=1; addFloat('+ Pickaxe!', player.px, player.py-CELL*1.9, '#cfd6de');
         netSend({t:'pick', map:mapMode, i:world.pickups.indexOf(pk2)}); } } }
     updateFloats(dt); updateParticles(dt);
+    worldTime+=dt;                                  // the sun keeps moving between server snapshots
+    updateCamFollow(dt);
     netUpdate(dt); draw(); requestAnimationFrame(loop); return;
   }
   player.stamina = Math.max(0, player.stamina - dt*(10/60));                                     // stamina drains 10/min
@@ -4543,6 +4664,8 @@ function loop(ts){
     if(player.rippleT<=0){ player.rippleT=0.24; spawnRipple(player.px, player.py); }
   }
   updateParticles(dt);
+  worldTime+=dt;                                  // the sun arcs on — one full day every 8 minutes
+  if(!DEDICATED) updateCamFollow(dt);
   if(net.mode==='host') netUpdate(dt);            // stream the shared world to the guest
   simulateOtherMap(dt);                           // …and tick whichever map the partner is on
   if(!DEDICATED) draw();                          // a headless server skips rendering entirely
@@ -4575,13 +4698,13 @@ canvas.addEventListener('pointermove', (ev)=>{
   const c=evToCanvas(ev); pointers.set(ev.pointerId, c);
   if(pinching && pointers.size>=2){
     const p=[...pointers.values()]; const nd=dist(p[0],p[1]), nm=mid(p[0],p[1]);
-    if(pinchDist>0) zoomAt(nm.x, nm.y, nd/pinchDist);
-    panBy(nm.x-pinchMid.x, nm.y-pinchMid.y);   // two-finger drag also pans
+    panBy(nm.x-pinchMid.x, nm.y-pinchMid.y);   // two-finger drag pans; zoom is locked
+    camFollow=false;
     pinchDist=nd; pinchMid=nm; return;
   }
   if(pointers.size===1){
     if(!movedFar && dist(c, downPt) > TAP_PX*DPR){ movedFar=true; dragging=true; }
-    if(dragging){ panBy(c.x-lastPt.x, c.y-lastPt.y); }
+    if(dragging){ panBy(c.x-lastPt.x, c.y-lastPt.y); camFollow=false; }   // a drag peeks around — the camera waits
     lastPt=c;
   }
 });
@@ -4623,12 +4746,8 @@ function endPointer(ev){
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
-// mouse wheel : zoom anchored on cursor
-canvas.addEventListener('wheel', (ev)=>{
-  ev.preventDefault();
-  const c=evToCanvas(ev);
-  zoomAt(c.x, c.y, ev.deltaY < 0 ? 1.12 : 1/1.12);
-}, {passive:false});
+// mouse wheel : zoom is locked (the camera rides close; the minimap gives the overview)
+canvas.addEventListener('wheel', (ev)=>{ ev.preventDefault(); }, {passive:false});
 
 // keyboard (no on-screen controls: zoom via wheel/pinch, pan via drag)
 document.addEventListener('keydown', (ev)=>{
@@ -4646,7 +4765,8 @@ window.addEventListener('resize', resize);
 /* --- default view: centre on the player at 250% zoom --- */
 function setDefaultView(){
   recomputeZoomLimits();
-  cam.scale = Math.min(maxScale, fitScale*5);   // start zoomed in 5x
+  cam.scale = Math.min(maxScale, fitScale*10);   // ride close — twice the old default
+  camFollow=true;
   const p=projOf(player.px, player.py);
   cam.ox = p.x - (canvas.width/2)/cam.scale;
   cam.oy = p.y - (canvas.height/2)/cam.scale;
@@ -5107,7 +5227,7 @@ function buildSnap(){
   const players=[packSelf()];
   for(const c of net.clients){ if(c.open && c.p.active) players.push(c.p); }
   return { t:'snap',
-    players,
+    players, wt:+(worldTime.toFixed(1)),
     gob, deer, bush, crops, cv:cave.unlocked?1:0,
     rk:(mapMode==='dungeon'&&world.rocks)?world.rocks.map(r=>r.gone?1:0):null,
     pk:(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null };
@@ -5145,6 +5265,7 @@ function netOnData(m, fromClient){
     if(m.cv) setCaveUnlocked();
     net.gotSeed=true; mpEnterTavern(); }
   else if(m.t==='snap'){ if(net.mode==='guest'){
+    if(m.wt!=null) worldTime=m.wt;                    // one sun for the whole party
     if(m.players) net.remotes=m.players.filter(p2=>p2.id!==net.myId);
     if((m.map||'forest')===mapMode) netApplySnap(m); } }
   else if(m.t==='me'){ if(net.mode==='host' && fromClient){ const P=fromClient.p;
