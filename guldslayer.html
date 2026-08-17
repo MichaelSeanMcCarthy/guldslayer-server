@@ -874,7 +874,7 @@ function spawnRoamers(){
   const wc=westOpen(); goblins.push(makeWitch(wc.x, wc.y));                                                                 // the goblin witch
 }
 const GOB_SPEED = CELL*1.5;          // archer walking speed
-const WITCH_SPEED = GOB_SPEED*0.5;   // the witch drifts at half a goblin's pace
+const WITCH_SPEED = MOVE_SPEED;      // the witch glides as fast as a human hero
 const GOB_CHOP_TIME = 4;             // seconds a goblin spends felling a tree for arrows
 function goblinDance(g, dt){          // idle camp behaviour: sway & occasionally leap
   g.jumpCD-=dt;
