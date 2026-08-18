@@ -139,7 +139,9 @@ function screenToWorld(sx, sy){ const px=cam.ox+sx/cam.scale, py=cam.oy+sy/cam.s
 
 function zoomAt(sx, sy, factor){   // anchor the point under the cursor
   const px = cam.ox + sx/cam.scale, py = cam.oy + sy/cam.scale;
-  cam.scale = Math.max(minScale, Math.min(maxScale, cam.scale * factor));
+  const free = typeof player!=='undefined' && player.freeCam;         // the cheat hero roams the lens at will
+  const lo = free ? fitScale*0.5 : minScale, hi = free ? fitScale*30 : maxScale;
+  cam.scale = Math.max(lo, Math.min(hi, cam.scale * factor));
   cam.ox = px - sx/cam.scale;
   cam.oy = py - sy/cam.scale;
   clampCam();
@@ -3194,7 +3196,7 @@ function drawZoomHUD(){                        // zoom factor read-out, top-cent
   ctx.restore();
 }
 /* --- minimap: the world from on high, cached per map and cropped around the hero --- */
-let mmCanvas=null, mmFor='', mmZoom=1, mmBtns=null;
+let mmCanvas=null, mmFor='', mmZoom=0.25, mmBtns=null;   // starts fully zoomed out — the whole world in the box
 function buildMinimap(){                       // paint one pixel block per cell into an offscreen canvas
   const PX=4, c=document.createElement('canvas'); c.width=GRID*PX; c.height=GRID*PX;
   const g=c.getContext('2d');
@@ -3659,6 +3661,7 @@ function draw(){
     const warm=duskWarmth(), dark=nightDarkness();
     if(warm>0.005) rect(0,0,canvas.width,canvas.height,'rgba(255,140,60,'+warm.toFixed(3)+')');
     if(dark>0.005) rect(0,0,canvas.width,canvas.height,'rgba(13,17,46,'+dark.toFixed(3)+')');
+    drawFireflies(dark);    // and the fireflies come out along the banks
   }
   drawFloats();             // floating text (e.g. "+1 stamina")
   drawHurtFlash();          // red screen-edge flash when hurt
@@ -4616,6 +4619,39 @@ function duskWarmth(){                               // an orange wash that swel
   return 0.16*(g(18,0.9)+g(6,0.9));
 }
 let camFollow=true;                                  // camera trails the hero; dragging peeks, moving re-engages
+/* --- fireflies: little green lights that gather near the water after dark --- */
+let fireflies=null, ffSeeded='';
+function seedFireflies(){                             // anchor a handful of fireflies to shallow-water banks
+  fireflies=[]; ffSeeded=mapMode;
+  if(mapMode!=='forest') return;
+  const banks=[];
+  for(let y=1;y<GRID-1;y++) for(let x=1;x<GRID-1;x++){
+    if(world.terrain[gi(x,y)]!==3) continue;                      // shallow water…
+    if(world.terrain[gi(x-1,y)]===0||world.terrain[gi(x+1,y)]===0||world.terrain[gi(x,y-1)]===0||world.terrain[gi(x,y+1)]===0)
+      banks.push({x,y});                                          // …touching grass: a bank
+  }
+  for(let i=0;i<90 && banks.length;i++){
+    const b=banks[(Math.random()*banks.length)|0];
+    fireflies.push({ ax:(b.x+0.5)*CELL, ay:(b.y+0.5)*CELL,
+      rx:CELL*(0.6+Math.random()*1.6), ry:CELL*(0.4+Math.random()*1.0),
+      sp:0.25+Math.random()*0.5, p1:Math.random()*6.28, p2:Math.random()*6.28, fl:2+Math.random()*3 });
+  }
+}
+function drawFireflies(dark){                         // drawn above the night wash so they truly glow
+  if(mapMode!=='forest' || dark<0.12) return;
+  if(!fireflies || ffSeeded!==mapMode) seedFireflies();
+  const a0=Math.min(1,(dark-0.12)/0.3), u=CELL*cam.scale, W=canvas.width, H=canvas.height;
+  ctx.save();
+  for(const f of fireflies){
+    const wx=f.ax+Math.sin(animT*f.sp+f.p1)*f.rx, wy=f.ay+Math.sin(animT*f.sp*1.37+f.p2)*f.ry;
+    const s=worldToScreen(wx, wy-CELL*0.35);                      // hovering just above the reeds
+    if(s.x<-30||s.x>W+30||s.y<-30||s.y>H+30) continue;
+    const tw=0.3+0.7*Math.abs(Math.sin(animT*f.fl+f.p2));         // slow twinkle
+    ctx.globalAlpha=a0*tw*0.35; circle(s.x, s.y, Math.max(2,u*0.085), '#b8e86a');   // soft halo
+    ctx.globalAlpha=a0*tw;      circle(s.x, s.y, Math.max(1,u*0.035), '#eaffb0');   // bright core
+  }
+  ctx.restore();
+}
 function respawnHerd(){                      // a fresh little herd wanders in east of the creek
   const minX=Math.max(2, Math.min(GRID-4, (world.creekMaxX!=null?world.creekMaxX:0)+2));
   let bc=null;
@@ -4739,15 +4775,14 @@ canvas.addEventListener('pointermove', (ev)=>{
   const c=evToCanvas(ev); pointers.set(ev.pointerId, c);
   if(pinching && pointers.size>=2){
     const p=[...pointers.values()]; const nd=dist(p[0],p[1]), nm=mid(p[0],p[1]);
-    if(pinchDist>0) zoomAt(nm.x, nm.y, nd/pinchDist);   // pinch zooms again — the meter shows the factor
-    panBy(nm.x-pinchMid.x, nm.y-pinchMid.y);            // two-finger drag also pans
-    camFollow=false;
+    if(pinchDist>0) zoomAt(nm.x, nm.y, nd/pinchDist);   // pinch zooms; the camera stays glued to the hero
+    if(player.freeCam){ panBy(nm.x-pinchMid.x, nm.y-pinchMid.y); camFollow=false; }   // …unless the cheat hero is looking around
     pinchDist=nd; pinchMid=nm; return;
   }
   if(pointers.size===1){
-    if(!movedFar && dist(c, downPt) > TAP_PX*DPR){ movedFar=true; dragging=true; }
-    if(dragging){ panBy(c.x-lastPt.x, c.y-lastPt.y); camFollow=false; }   // a drag peeks around — the camera waits
-    lastPt=c;
+    if(!movedFar && dist(c, downPt) > TAP_PX*DPR){ movedFar=true; dragging=true; }   // still tracked so a drag isn't a tap
+    if(dragging && player.freeCam){ panBy(c.x-lastPt.x, c.y-lastPt.y); camFollow=false; }   // free pan is god mode's privilege
+    lastPt=c;                                            // for everyone else the camera never leaves the player
   }
 });
 function endPointer(ev){
@@ -4886,7 +4921,7 @@ function startAsRace(k){ player.race=k; closeRaceModal(); resetPlayerStats(); sc
 function resetPlayerStats(){                         // fresh start: full HP, starting kit, cleared state
   const rs=RACE_STATS[player.race]||RACE_STATS.human;   // race sets max hearts + move speed
   player.hpMax=rs.hpMax; player.speedMul=rs.speed;
-  player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0;
+  player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false;
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
@@ -4927,6 +4962,7 @@ function tavernTap(x,y){
 function startGodMode(){                    // testing loadout: a human with everything, moving like the wind
   player.race='human'; closeRaceModal(); resetPlayerStats();
   player.speedMul=4;                                                       // 4x a human's pace
+  player.freeCam=true;                                                     // and an untethered lens: pan & zoom without limits
   player.club=1; player.bow=1; player.longbow=1; player.sword=1; player.gaxe=1;      // every weapon in the game…
   player.helmet=1; player.armor=1; player.leggings=1; player.chainmail=1;             // …and every piece of armor
   player.equipMelee='gaxe'; player.equipRanged='longbow';                             // best of each equipped
