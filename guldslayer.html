@@ -1778,6 +1778,7 @@ function updateCombat(dt){
   if(player.carcassTarget){ if(!updateCarcass(dt)) return; }   // heading to / harvesting a carcass
   if(player.harvestTarget!=null){ if(!updateHarvest(dt)) return; }   // heading to / reaping wheat
   if(player.propTarget){ if(!updatePunch(dt)) return; }   // heading to / punching a crate
+  if(player.swingCD>0) player.swingCD-=dt;           // the weapon's rhythm lives on the PLAYER — retargeting can't reset it
   const A=player.attack; if(!A) return;
   if(creatureDead(A.kind, A.ref)){ player.attack=null; return; }
   const p=creaturePos(A.kind, A.ref);
@@ -1785,14 +1786,13 @@ function updateCombat(dt){
   const range=A.ranged?8:1.6;
   if(distTiles<=range){
     player.path=[]; player.targetCell=null; player.face=face8(p.x-player.px, p.y-player.py);
-    A.cd=(A.cd||0)-dt;
     if(A.ranged){
       if(player.arrows<=0){ player.attack=null; }                        // out of arrows → stop
-      else if(A.cd<=0){ A.cd=0.8; player.arrows--; fireArrow(A.ref, A.kind); }   // keep loosing arrows (each does the equipped bow's DMG on hit)
+      else if(player.swingCD<=0){ player.swingCD=0.8; player.arrows--; fireArrow(A.ref, A.kind); }   // keep loosing arrows (each does the equipped bow's DMG on hit)
     } else if(A.fist){                                                   // bare-handed: punch for 2 HP
       if(player.punchT>0) player.punchT-=dt;
-      if(A.cd<=0){ A.cd=0.7; player.punchT=0.24; coopPlayerDamage(A.kind, A.ref, 2); }
-    } else if(A.cd<=0){ A.cd=0.6; const mk=player.equipMelee||'club'; coopPlayerDamage(A.kind, A.ref, rollDmg(mk));
+      if(player.swingCD<=0){ player.swingCD=0.7; player.punchT=0.24; coopPlayerDamage(A.kind, A.ref, 2); }
+    } else if(player.swingCD<=0){ player.swingCD=0.6; const mk=player.equipMelee||'club'; coopPlayerDamage(A.kind, A.ref, rollDmg(mk));
       if((player.magic[mk]||0)>0){ const mp=creaturePos(A.kind, A.ref); spawnMagicHit(mp.x, mp.y, player.magic[mk]); } }  // keep swinging the equipped melee weapon
   } else {
     A.repath-=dt;
