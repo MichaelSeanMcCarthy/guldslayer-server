@@ -3681,7 +3681,7 @@ function draw(){
     drawGuldHUD();            // GULD purse under the portrait
   drawTimeHUD();            // the day dial — sun and moon riding the sky band
   drawMinimap();            // the world from on high, below the dial
-  drawZoomHUD();            // zoom factor read-out, top-centre
+  // drawZoomHUD();         // zoom read-out retired — the 5×–10× band is settled (re-enable to tune again)
 }
 function drawHurtFlash(){
   if(player.hurtT<=0) return;
@@ -4453,18 +4453,23 @@ function toolButtons(){
   if(food.length){ x += groupGap - gap; for(const k of food){ out.push({key:k, x, y, w:s, h:s, group:'food'}); x+=s+gap; } }
   return out;
 }
+const FOOD_CD=10;                                     // seconds between bites — the belly needs a moment
+let foodCD=0;
 function eatFood(k){                                  // tap a food button — eat one on the spot
+  if(foodCD>0){ addFloat('Still digesting… ('+Math.ceil(foodCD)+'s)', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
   if(k==='jerky'){
     if((player.jerky||0)<1) return;
     if(player.hp>=player.hpMax && player.stamina>=100){ addFloat('Already full!', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
     player.jerky--; player.hp=Math.min(player.hpMax, player.hp+10); player.stamina=Math.min(100, player.stamina+20);
     addFloat('+1 heart', player.px, player.py-CELL*2.1, PAL.heartFull);
     addFloat('+20 stamina', player.px, player.py-CELL*1.7, PAL.stamFill);
+    foodCD=FOOD_CD;
   } else if(k==='meal'){
     if((player.meal||0)<1) return;
     if(player.hp>=player.hpMax && player.stamina>=100){ addFloat('Already full!', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
     player.meal--; player.hp=player.hpMax; player.stamina=100;
     addFloat('A hearty feast — fully restored!', player.px, player.py-CELL*2.1, '#ffd44d');
+    foodCD=FOOD_CD;
   }
 }
 function drawToolIcon(key, cx, cy, s){
@@ -4552,6 +4557,17 @@ function drawToolBar(){
     if(badge!=null){
       ctx.fillStyle=PAL.stamFill; ctx.font='bold '+Math.round(b.w*0.24)+'px system-ui, sans-serif';
       ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText(badge, b.x+b.w-4*DPR, b.y+3*DPR);
+    }
+    if(b.group==='food' && foodCD>0){                                       // digestion: a clock-sweep shade drains away over 10 s
+      const frac=foodCD/FOOD_CD, cx3=b.x+b.w/2, cy3=b.y+b.h/2, R3=b.w;      // radius > half-diagonal so the pie covers the corners
+      ctx.save();
+      ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+      ctx.beginPath(); ctx.moveTo(cx3, cy3);
+      ctx.arc(cx3, cy3, R3, -Math.PI/2, -Math.PI/2 + frac*Math.PI*2, false);
+      ctx.closePath(); ctx.fillStyle='rgba(10,8,6,.68)'; ctx.fill();
+      ctx.fillStyle='#f4e7cf'; ctx.font='bold '+Math.round(b.w*0.3)+'px system-ui, sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(Math.ceil(foodCD), cx3, cy3);
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -4705,6 +4721,7 @@ function loop(ts){
         netSend({t:'pick', map:mapMode, i:world.pickups.indexOf(pk2)}); } } }
     updateFloats(dt); updateParticles(dt);
     worldTime+=dt;                                  // the sun keeps moving between server snapshots
+    if(foodCD>0) foodCD=Math.max(0, foodCD-dt);
     updateCamFollow(dt);
     netUpdate(dt); draw(); requestAnimationFrame(loop); return;
   }
@@ -4742,6 +4759,7 @@ function loop(ts){
   }
   updateParticles(dt);
   worldTime+=dt;                                  // the sun arcs on — one full day every 8 minutes
+  if(foodCD>0) foodCD=Math.max(0, foodCD-dt);
   if(!DEDICATED) updateCamFollow(dt);
   if(net.mode==='host') netUpdate(dt);            // stream the shared world to the guest
   simulateOtherMap(dt);                           // …and tick whichever map the partner is on
