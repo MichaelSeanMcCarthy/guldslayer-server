@@ -86,7 +86,8 @@ const FOLLOW_DIST = 8;          // tiles: does follow the buck if farther than t
 const FAWN_FOLLOW = 4;          // tiles: fawns stay closer to their mother
 const NURSE_TIME = 5;           // seconds a fawn feeds from its mother
 const BUSH_RESPAWN = 300;       // seconds for an eaten bush to grow back (5 minutes)
-const STARVE_TIME = 30;         // seconds a hungry deer survives without eating
+const STARVE_TIME = 90;         // seconds a hungry deer survives without eating — death only under real scarcity, not traffic
+const BUSHES_PER_DEER = 9;      // grown bushes needed per living deer for the herd to keep breeding (carrying capacity)
 const GROW_TIME = 10;           // seconds a respawned bush/tree takes to scale up
 
 /* --- terrain generation tuning --- */
@@ -2006,7 +2007,12 @@ const fawns2 = []; for(let i=0;i<8;i++){ const f=makeDeer(mother2,false,C_FAWN,0
 const herd2 = [buck2, ...does2, ...fawns2];    // 24 animals (~4x of the first herd's 6)
 const allDeer = [...herd, ...herd2];
 const pendingDeer = [];                        // fawns born this frame, flushed into allDeer after the update loop
-const DEER_CAP = 90;                            // population ceiling so breeding can't run away
+const DEER_CAP = 90;                            // hard ceiling as a backstop; the real limit is food (see deerRoomToBreed)
+function deerRoomToBreed(){                     // equilibrium: the herd only grows while there are ~9 grown bushes per deer
+  const alive=allDeer.filter(d=>!d.dead && !d.gone).length + pendingDeer.length;
+  const grown=world.bushes.reduce((n,b)=>n+((b.grow==null||b.grow>=1)?1:0), 0);
+  return grown >= (alive+1)*BUSHES_PER_DEER;
+}
 
 function occupied(cx,cy,self){                            // a creature (deer/goblin/player) sits here?
   for(const d of allDeer){ if(d===self||d.dead||d.gone) continue; if(cellOf(d.px)===cx && cellOf(d.py)===cy) return true; }
@@ -2277,7 +2283,8 @@ function buckMate(buck, dt){
   }
   buck.path=[]; buck.state='rest'; buck.face=face8(t.px-buck.px, t.py-buck.py);   // arrived — mount & bob
   buck.mateBob=1; buck.matingT=(buck.matingT||0)+dt;
-  if(buck.matingT>=3.5){                                       // done — she's now pregnant
+  if(buck.matingT>=3.5){                                       // done — she's now pregnant (if the meadow can carry another)
+    if(!deerRoomToBreed()){ buck.wantMate=false; buck.mateTarget=null; buck.mateBob=0; buck.matingT=0; return false; }
     t.pregnant=true; t.pregT=0; t.mateHold=0;
     buck.wantMate=false; buck.mateTarget=null; buck.mateBob=0; buck.matingT=0;
   }
@@ -2370,7 +2377,7 @@ function updateDeer(d, dt){
     const dur = d.fawn ? NURSE_TIME : EAT_TIME;
     if(d.eatT >= dur){
       if(!d.fawn){ eatBush(d.targetBush); d.targetBush=null; }           // fawns don't consume bushes
-      if(d.antlers){ d.eatCount=(d.eatCount||0)+1; if(d.eatCount%3===0) d.wantMate=true; }  // every 3rd meal a buck seeks a mate
+      if(d.antlers){ d.eatCount=(d.eatCount||0)+1; if(d.eatCount%3===0 && deerRoomToBreed()) d.wantMate=true; }  // every 3rd meal a buck seeks a mate — if the land can feed another mouth
       d.hunger=0; deerDecide(d, false);
     }
   }
@@ -3172,11 +3179,7 @@ function drawTimeHUD(){                        // the day dial: a 24-hour sky ba
     for(let i=0;i<8;i++){ const a=i*Math.PI/4+animT*0.4;
       ctx.beginPath(); ctx.moveTo(mx+Math.cos(a)*mr*0.95, my+Math.sin(a)*mr*0.95);
       ctx.lineTo(mx+Math.cos(a)*mr*1.35, my+Math.sin(a)*mr*1.35); ctx.stroke(); } }
-  const hh=Math.floor(h), mm=Math.floor((h-hh)*60);            // small clock under the band
-  ctx.fillStyle='rgba(244,231,207,.9)'; ctx.font='bold '+Math.round(ic*0.85)+'px system-ui, sans-serif';
-  ctx.textAlign='right'; ctx.textBaseline='top';
-  ctx.fillText((hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm, bx+bw, by+bh+ic*0.25);
-  ctx.restore();
+  ctx.restore();               // (numeric clock retired — the sun and moon tell the time well enough)
 }
 function drawZoomHUD(){                        // zoom factor read-out, top-centre (factor = cam.scale / fitScale)
   const zf=cam.scale/Math.max(0.0001, fitScale);
