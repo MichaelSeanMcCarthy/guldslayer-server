@@ -131,8 +131,8 @@ const cam = { scale: 1, ox: 0, oy: 0 };
 let fitScale = 1, minScale = 0.2, maxScale = 8;
 function recomputeZoomLimits(){
   fitScale = Math.min(canvas.width/(PROJ_W*1.08), canvas.height/(PROJ_H*1.18));
-  minScale = fitScale * 0.6;
-  maxScale = fitScale * 24;      // headroom for the close-riding default camera
+  minScale = fitScale * 5;       // zoom range 5×–10× on the meter (Michael's chosen band)
+  maxScale = fitScale * 10;
 }
 function worldToScreen(wx, wy){ const p=projOf(wx,wy); return { x:(p.x-cam.ox)*cam.scale, y:(p.y-cam.oy)*cam.scale }; }
 function screenToWorld(sx, sy){ const px=cam.ox+sx/cam.scale, py=cam.oy+sy/cam.scale; return projInv(px,py); }
@@ -4812,7 +4812,7 @@ window.addEventListener('resize', resize);
 /* --- default view: centre on the player at 250% zoom --- */
 function setDefaultView(){
   recomputeZoomLimits();
-  cam.scale = Math.min(maxScale, fitScale*22.5);   // ride close — 50% closer again
+  cam.scale = Math.min(maxScale, fitScale*7.5);   // default in the middle of the 5×–10× band
   camFollow=true;
   const p=projOf(player.px, player.py);
   cam.ox = p.x - (canvas.width/2)/cam.scale;
