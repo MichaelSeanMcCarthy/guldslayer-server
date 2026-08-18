@@ -2584,6 +2584,9 @@ function updateParticles(dt){
     if(p.life<=0){ particles.splice(i,1); continue; }
     if(p.kind==='bit'){ p.vy+=(p.g||0)*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; }
     else if(p.kind==='arrow'){ p.t+=dt; const f=Math.min(1,p.t/p.dur); p.x=p.x0+(p.tx-p.x0)*f; p.y=p.y0+(p.ty-p.y0)*f;
+      if(p.arcH==null){ const dst=Math.hypot(p.tx-p.x0, p.ty-p.y0); p.arcH=Math.min(CELL*2.0, CELL*0.3+dst*0.10); }   // longer shots loft higher
+      p.f=f; p.hz=p.arcH*4*f*(1-f);                                                            // parabolic lift, apex mid-flight
+      p.angV=Math.atan2((p.ty-p.y0)-p.arcH*(4-8*f), (p.tx-p.x0));                              // nose follows the flight path
       if(p.t>=p.dur){
         if(p.fx){ /* another player's arrow — purely visual here; the shooter resolves the damage */ }
         else if(p.toPlayer){ if(p.toRemote){ if(p.tp && typeof netHitRemote==='function') netHitRemote(p.tp,5,false); } else if(!player.dead) playerHit(5, true); }   // goblin arrow → 5 HP to whichever player
@@ -2615,16 +2618,22 @@ function drawParticles(){
   for(const p of particles){ const s=worldToScreen(p.x,p.y), a=Math.max(0,p.life/p.max);
     ctx.save();
     if(p.kind==='bit'){ ctx.globalAlpha=a; circle(s.x, s.y, Math.max(1, p.size*cam.scale), p.color); }
-    else if(p.kind==='arrow'){ const u=CELL*cam.scale, L=u*0.85, th=Math.max(2.5,u*0.06);
+    else if(p.kind==='arrow'){ const u=CELL*cam.scale;
+      const up=Math.sin(Math.PI*(p.f||0)), sc=1+0.55*up;                                     // swells to the apex, shrinks to the landing
+      const L=u*0.85*sc, th=Math.max(2.5,u*0.06*sc), ang=(p.angV!=null?p.angV:p.ang);
+      const ay=s.y-(p.hz||0)*cam.scale;                                                      // lofted above its ground line
+      ctx.globalAlpha=0.2*(1-up*0.5); ctx.fillStyle=PAL.shadow;                              // faint shadow racing along the ground
+      ctx.beginPath(); ctx.ellipse(s.x, s.y, u*0.22*(1-up*0.3), u*0.22*TILT*(1-up*0.3), 0,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha=1;
       if(p.mt>0){ const mc2=p.mt>=1?'rgba(255,150,50,':'rgba(90,140,255,';                   // a magic arrow burns as it flies
-        circle(s.x, s.y, u*0.34, mc2+'0.35)'); circle(s.x, s.y, u*0.2, mc2+'0.5)'); }
-      const tl=worldToScreen(p.x-Math.cos(p.ang)*CELL*0.9, p.y-Math.sin(p.ang)*CELL*0.9);   // motion trail behind the arrow
+        circle(s.x, ay, u*0.34*sc, mc2+'0.35)'); circle(s.x, ay, u*0.2*sc, mc2+'0.5)'); }
+      const tlx=s.x-Math.cos(ang)*u*0.9, tly=ay-Math.sin(ang)*u*0.9;                         // motion trail behind the arrow
       ctx.globalAlpha=0.3; ctx.strokeStyle=p.mt>0?(p.mt>=1?'#ffb050':'#7fa5ff'):PAL.pMilk; ctx.lineWidth=th*0.7;
-      ctx.beginPath(); ctx.moveTo(tl.x,tl.y); ctx.lineTo(s.x,s.y); ctx.stroke(); ctx.globalAlpha=1;
-      ctx.translate(s.x,s.y); ctx.rotate(p.ang);
+      ctx.beginPath(); ctx.moveTo(tlx,tly); ctx.lineTo(s.x,ay); ctx.stroke(); ctx.globalAlpha=1;
+      ctx.translate(s.x,ay); ctx.rotate(ang);
       rect(-L*0.5, -th/2, L, th, PAL.trunk);                                                // shaft
-      tri([L*0.5,-th*1.8],[L*0.5,th*1.8],[L*0.5+u*0.18,0], PAL.axeBlade);                    // arrowhead
-      tri([-L*0.5,0],[-L*0.5-u*0.12,-u*0.1],[-L*0.5-u*0.12,u*0.1], PAL.pMilk); }             // fletching
+      tri([L*0.5,-th*1.8],[L*0.5,th*1.8],[L*0.5+u*0.18*sc,0], PAL.axeBlade);                 // arrowhead
+      tri([-L*0.5,0],[-L*0.5-u*0.12*sc,-u*0.1*sc],[-L*0.5-u*0.12*sc,u*0.1*sc], PAL.pMilk); } // fletching
     else if(p.kind==='soul'){
       const age=(p.t||0)-p.delay;
       if(age>0){
