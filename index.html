@@ -1926,16 +1926,15 @@ function updateStumps(dt){
 const cropBlocked = (x,y)=> !inGrid(x,y) || isTree(x,y) || isWater(x,y) || isShopCell(x,y) || isStallCell(x,y) || isArmorCell(x,y) || (world.shopBlock && world.shopBlock.has(gi(x,y)));
 const isCrop = (x,y)=> world.crops.has(gi(x,y));
 function tillOrUntill(cx,cy){
-  const bx=cx-(cx&1), by=cy-(cy&1);                              // snap to an aligned 2x2 block
-  const cells=[[bx,by],[bx+1,by],[bx,by+1],[bx+1,by+1]].filter(([x,y])=>inGrid(x,y));
-  if(cells.some(([x,y])=> isCrop(x,y))){                         // already a plot → hoe it back to grass
-    for(const [x,y] of cells) world.crops.delete(gi(x,y));
-    if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'till', cx, cy});   // host toggles the same block
+  const bx=cx-(cx%TILE), by=cy-(cy%TILE);                        // snap to the 3m tile — one plot IS one tile
+  const cells=[]; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) cells.push([bx+dx,by+dy]);
+  if(cells.some(([x,y])=> inGrid(x,y)&&isCrop(x,y))){            // already a plot → hoe the whole tile back to grass
+    for(const [x,y] of cells) if(inGrid(x,y)) world.crops.delete(gi(x,y));
+    if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'till', cx, cy});   // host toggles the same tile
     return;
   }
-  const valid=cells.filter(([x,y])=> !cropBlocked(x,y));
-  if(!valid.length) return;
-  for(const [x,y] of valid){
+  if(cells.some(([x,y])=> cropBlocked(x,y))) return;             // the whole tile must be open ground — all or nothing
+  for(const [x,y] of cells){
     const bi=world.bushes.findIndex(b=>b.x===x&&b.y===y); if(bi>=0) world.bushes.splice(bi,1);   // plow the bush under
     world.crops.set(gi(x,y), {stage:'till', t:0});
   }
@@ -3551,17 +3550,23 @@ function draw(){
     if(a.x>canvas.width||a.y>canvas.height||b.x<0||b.y<0) continue;
     rect(a.x, a.y, b.x-a.x+1, b.y-a.y+1, m.edge?PAL.dirtDark:PAL.dirt);
   }
-  // tilled crop plots (furrowed soil), inset to leave a grass edge so they read clearly
-  for(const [key,c] of world.crops){ const cx=key%GRID, cy=(key/GRID)|0;
-    const a=worldToScreen(cx*CELL,cy*CELL), b=worldToScreen((cx+1)*CELL,(cy+1)*CELL);
+  // tilled crop plots: ONE furrowed 3m-tile patch per plot, inset to leave a grass edge
+  for(const [key] of world.crops){ const cx=key%GRID, cy=(key/GRID)|0;
+    if(cx%TILE || cy%TILE) continue;                                        // draw once, from the plot's origin cell
+    const a=worldToScreen(cx*CELL,cy*CELL), b=worldToScreen((cx+TILE)*CELL,(cy+TILE)*CELL);
     if(a.x>canvas.width||a.y>canvas.height||b.x<0||b.y<0) continue;
-    const insx=(b.x-a.x)*0.14, insy=(b.y-a.y)*0.14, x0=a.x+insx, y0=a.y+insy, w=(b.x-a.x)-2*insx, h=(b.y-a.y)-2*insy;
+    const insx=(b.x-a.x)*0.05, insy=(b.y-a.y)*0.05, x0=a.x+insx, y0=a.y+insy, w=(b.x-a.x)-2*insx, h=(b.y-a.y)-2*insy;
     rect(x0, y0, w+1, h+1, PAL.farm);
     ctx.strokeStyle=PAL.farmFurrow; ctx.lineWidth=Math.max(1,DPR*0.9); ctx.beginPath();
-    for(let k=1;k<=2;k++){ const yy=y0+h*k/3; ctx.moveTo(x0+1,yy); ctx.lineTo(x0+w-1,yy); }
+    for(let k=1;k<=4;k++){ const yy=y0+h*k/5; ctx.moveTo(x0+1,yy); ctx.lineTo(x0+w-1,yy); }
     ctx.stroke();
-    if(c.stage==='seed'){ ctx.fillStyle=PAL.wheatSeed;                      // scattered seeds
-      for(let i=0;i<5;i++){ const sx=x0+w*(0.2+0.15*i), sy=y0+h*(0.35+0.28*((i*3)%2)); circle(sx,sy,Math.max(1,w*0.05),PAL.wheatSeed); } }
+  }
+  for(const [key,c] of world.crops){ if(c.stage!=='seed') continue;         // scattered seeds stay per sown cell
+    const cx=key%GRID, cy=(key/GRID)|0;
+    const a=worldToScreen(cx*CELL,cy*CELL), b=worldToScreen((cx+1)*CELL,(cy+1)*CELL);
+    if(a.x>canvas.width||a.y>canvas.height||b.x<0||b.y<0) continue;
+    const w=b.x-a.x, h=b.y-a.y;
+    for(let i=0;i<5;i++){ const sx=a.x+w*(0.2+0.15*i), sy=a.y+h*(0.35+0.28*((i*3)%2)); circle(sx,sy,Math.max(1,w*0.05),PAL.wheatSeed); }
   }
 
   // creek: shallow / mid / deep rings
