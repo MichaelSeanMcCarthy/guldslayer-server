@@ -1627,15 +1627,19 @@ function setTool(t){                                // switching tools cancels w
   if(t!=='pickaxe'){ player.mineRock=null; player.mineT=0; }
   if(t!=='axe'){ player.chopTree=null; player.chopping=false; }
 }
+// Taps land in world space at the creature's FEET, but the sprite's body rises ~1m above them
+// (and the 3/4 projection pushes a body-tap north of the feet) — so measure to the feet AND to
+// the body's visual centre, with a forgiving radius. A finger is not a crosshair.
+function tapDist(wx,wy,px,py){ return Math.min(Math.hypot(px-wx, py-wy), Math.hypot(px-wx, (py-CELL*0.7)-wy)); }
 function creatureAt(wx,wy){                         // nearest living deer/goblin under a tap
-  let best=null, bd=CELL*1.0;
-  for(const d of allDeer){ if(d.dead||d.gone) continue; const dd=Math.hypot(d.px-wx, d.py-wy); if(dd<bd){ bd=dd; best={kind:'deer', ref:d}; } }
-  for(const g of goblins){ if(g.dead) continue; const gx=(g.px!=null?g.px:(g.x+0.5)*CELL), gy=(g.py!=null?g.py:(g.y+0.5)*CELL); const dd=Math.hypot(gx-wx, gy-wy); if(dd<bd){ bd=dd; best={kind:'goblin', ref:g}; } }
+  let best=null, bd=CELL*2.2;
+  for(const d of allDeer){ if(d.dead||d.gone) continue; const dd=tapDist(wx,wy,d.px,d.py); if(dd<bd){ bd=dd; best={kind:'deer', ref:d}; } }
+  for(const g of goblins){ if(g.dead) continue; const gx=(g.px!=null?g.px:(g.x+0.5)*CELL), gy=(g.py!=null?g.py:(g.y+0.5)*CELL); const dd=tapDist(wx,wy,gx,gy); if(dd<bd){ bd=dd; best={kind:'goblin', ref:g}; } }
   return best;
 }
 function carcassAt(wx,wy){                           // nearest FRESH deer carcass (before it rots to bones) under a tap
-  let best=null, bd=CELL*1.1;
-  for(const d of allDeer){ if(!d.dead || d.gone || (d.deadT||0)>=DEER_FRESH_T) continue; const dd=Math.hypot(d.px-wx, d.py-wy); if(dd<bd){ bd=dd; best=d; } }
+  let best=null, bd=CELL*2.0;
+  for(const d of allDeer){ if(!d.dead || d.gone || (d.deadT||0)>=DEER_FRESH_T) continue; const dd=tapDist(wx,wy,d.px,d.py); if(dd<bd){ bd=dd; best=d; } }
   return best;
 }
 function startCarcass(d){                            // walk to a carcass, then harvest it for stamina
@@ -1666,9 +1670,9 @@ function updateCarcass(dt){
 const SOUL_VALUE = { claw:1, archer:2, skeleton:2, bat:1, rat:1, bigskel:4, boss:5, witch:10, king:25 };   // normal goblin 1; harder foes more
 function soulsFor(g){ return SOUL_VALUE[g.kind]!=null ? SOUL_VALUE[g.kind] : 1; }
 function goblinCorpseAt(wx,wy){                      // nearest fresh, unlooted enemy body under a tap
-  let best=null, bd=CELL*1.2;
+  let best=null, bd=CELL*2.0;
   for(const g of goblins){ if(!g.dead || g.gone || g.looted || (g.deadT||0)>=60) continue;
-    const p=creaturePos('goblin', g), dd=Math.hypot(p.x-wx, p.y-wy); if(dd<bd){ bd=dd; best=g; } }
+    const p=creaturePos('goblin', g), dd=tapDist(wx,wy,p.x,p.y); if(dd<bd){ bd=dd; best=g; } }
   return best;
 }
 function startSoulLoot(g){                           // walk to the body, then draw out its soul
