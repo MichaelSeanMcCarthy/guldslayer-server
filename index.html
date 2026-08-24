@@ -1523,12 +1523,12 @@ function altarBless(k, major){                       // pay the stones; the chos
     if(tier>=1){ shop.msg='It is already enchanted'; }
     else if(player.souls<20){ shop.msg='Not enough souls ('+player.souls+'/20)'; }
     else if(player.witchEye<1){ shop.msg='Requires the Eye of the Witch'; }
-    else { player.souls-=20; player.witchEye--; player.magic[k]=1; shop.msg='Major blessing granted — +100%!'; }
+    else { player.souls-=20; player.witchEye--; player.magic[k]=1; shop.msg='Enchantment granted — +100%!'; }
   } else {
     if(tier>=1){ shop.msg='It is already enchanted'; }
-    else if(tier>=0.2){ shop.msg='It already holds a minor blessing'; }
+    else if(tier>=0.2){ shop.msg='It is already blessed'; }
     else if(player.souls<5){ shop.msg='Not enough souls ('+player.souls+'/5)'; }
-    else { player.souls-=5; player.magic[k]=0.2; shop.msg='Minor blessing granted — +20%!'; }
+    else { player.souls-=5; player.magic[k]=0.2; shop.msg='Blessing granted — +20%!'; }
   }
   shop.msgT=2.5;
 }
@@ -1561,13 +1561,15 @@ function drawAltarUI(){
   // the two rites, described
   const df=Math.round(Math.max(12, L.descH*0.24));
   ctx.font='bold '+df+'px system-ui, sans-serif';
-  ctx.fillStyle='#8fb0ff'; ctx.fillText('Minor Blessing', lx, L.py+L.headH+L.descH*0.26);
+  ctx.fillStyle='#8fb0ff'; ctx.fillText('Blessing', lx, L.py+L.headH+L.descH*0.26);
+  const bw1=ctx.measureText('Blessing').width;
   ctx.fillStyle=PAL.shopWall; ctx.font=df+'px system-ui, sans-serif';
-  ctx.fillText('— +20% power for 5 souls', lx+df*8.2, L.py+L.headH+L.descH*0.26);
+  ctx.fillText('— +20% power for 5 souls', lx+bw1+df*0.7, L.py+L.headH+L.descH*0.26);
   ctx.fillStyle='#ffb050'; ctx.font='bold '+df+'px system-ui, sans-serif';
-  ctx.fillText('Major Blessing', lx, L.py+L.headH+L.descH*0.66);
+  ctx.fillText('Enchantment', lx, L.py+L.headH+L.descH*0.66);
+  const bw2=ctx.measureText('Enchantment').width;
   ctx.fillStyle=PAL.shopWall; ctx.font=df+'px system-ui, sans-serif';
-  ctx.fillText('— +100% power for 20 souls + the Eye of the Witch', lx+df*8.2, L.py+L.headH+L.descH*0.66);
+  ctx.fillText('— +100% power for 20 souls + the Eye of the Witch', lx+bw2+df*0.7, L.py+L.headH+L.descH*0.66);
   // your gear, one row each
   if(!L.gear.length){
     ctx.fillStyle=PAL.dirt; ctx.font=df+'px system-ui, sans-serif';
