@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const GRID = 100;         // cells per side
+const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const CELL = 40;          // world units per cell
 const WORLD = GRID * CELL; // total world size
 const MOVE_SPEED = CELL * 3; // world units / second (50% of the original CELL*6)
@@ -93,7 +93,7 @@ const GROW_TIME = 10;           // seconds a respawned bush/tree takes to scale 
 /* --- terrain generation tuning --- */
 const FIXED_SEED = 61803398;   // locks the map layout (change via R for a new map)
 const GEN = {
-  treeClusters: 46,      // number of tree clumps (scaled for 100x100)
+  treeClusters: 400,     // number of tree clumps (scaled for 300x300)
   clusterMin: 3, clusterMax: 8,
   treeDensity: 0.72,     // fill probability at a clump centre (2x2 trees)
   bushBase: 0.006,       // bush chance on open cells anywhere
@@ -132,8 +132,8 @@ const cam = { scale: 1, ox: 0, oy: 0 };
 let fitScale = 1, minScale = 0.2, maxScale = 8;
 function recomputeZoomLimits(){
   fitScale = Math.min(canvas.width/(PROJ_W*1.08), canvas.height/(PROJ_H*1.18));
-  minScale = fitScale * 5;       // zoom range 5×–10× on the meter (Michael's chosen band)
-  maxScale = fitScale * 10;
+  minScale = fitScale * 15;      // same on-screen framing as the old 5×–10× band (fitScale shrank 3× with the wider world)
+  maxScale = fitScale * 30;
 }
 function worldToScreen(wx, wy){ const p=projOf(wx,wy); return { x:(p.x-cam.ox)*cam.scale, y:(p.y-cam.oy)*cam.scale }; }
 function screenToWorld(sx, sy){ const px=cam.ox+sx/cam.scale, py=cam.oy+sy/cam.scale; return projInv(px,py); }
@@ -141,7 +141,7 @@ function screenToWorld(sx, sy){ const px=cam.ox+sx/cam.scale, py=cam.oy+sy/cam.s
 function zoomAt(sx, sy, factor){   // anchor the point under the cursor
   const px = cam.ox + sx/cam.scale, py = cam.oy + sy/cam.scale;
   const free = typeof player!=='undefined' && player.freeCam;         // the cheat hero roams the lens at will
-  const lo = free ? fitScale*0.5 : minScale, hi = free ? fitScale*30 : maxScale;
+  const lo = free ? fitScale*0.5 : minScale, hi = free ? fitScale*90 : maxScale;
   cam.scale = Math.max(lo, Math.min(hi, cam.scale * factor));
   cam.ox = px - sx/cam.scale;
   cam.oy = py - sy/cam.scale;
@@ -477,20 +477,20 @@ function generateDungeon(){
     while(y!==y2){ carve(x,y,z); carve(x+1,y,z); y+=Math.sign(y2-y); }
     carve(x,y,z); carve(x+1,y,z); };
   // main chain of rooms, SW (mine) to NE (throne)
-  const rooms=[]; let cx=10, cy=86;
-  for(let i=0;i<8;i++){
+  const rooms=[]; let cx=30, cy=GRID-42;
+  for(let i=0;i<10;i++){
     const w=6+((rng()*6)|0), h=5+((rng()*5)|0);
     rooms.push({ x:Math.max(3,cx-(w>>1)), y:Math.max(3,cy-(h>>1)), w, h });
-    cx=Math.min(GRID-14, cx+8+((rng()*9)|0)); cy=Math.max(16, cy-8-((rng()*9)|0));
+    cx=Math.min(GRID-40, cx+24+((rng()*27)|0)); cy=Math.max(24, cy-24-((rng()*27)|0));   // long dark marches between rooms
   }
-  const tr={ x:76, y:6, w:18, h:13, throne:true };        // the throne room, NE
+  const tr={ x:GRID-60, y:8, w:18, h:13, throne:true };   // the throne room, NE
   rooms.push(tr);
   const rc=(r)=>({x:r.x+(r.w>>1), y:r.y+(r.h>>1)});
   rooms.forEach((r,i)=> carveRoom(r, r.throne?2:zoneOf(i)));
   for(let i=0;i<rooms.length-1;i++){ const a=rc(rooms[i]), b=rc(rooms[i+1]); corridor(a.x,a.y,b.x,b.y, rooms[i+1].throne?1:zoneOf(i)); }
   // side rooms to explore
   const sides=[];
-  for(let i=0;i<5;i++){ const base=rooms[1+((rng()*6)|0)], w=5+((rng()*5)|0), h=4+((rng()*4)|0);
+  for(let i=0;i<15;i++){ const base=rooms[1+((rng()*8)|0)], w=5+((rng()*5)|0), h=4+((rng()*4)|0);
     const sx=Math.max(3, Math.min(GRID-4-w, base.x+(rng()<0.5? -w-4 : base.w+4)));
     const sy=Math.max(3, Math.min(GRID-4-h, base.y+((rng()*8)|0)-4));
     const sr={x:sx,y:sy,w,h}; sides.push(sr); rooms.push(sr);
@@ -513,12 +513,12 @@ function generateDungeon(){
     if(world.terrain[gi(x-1,y)]===1||world.terrain[gi(x+1,y)]===1||world.terrain[gi(x,y-1)]===1) wallFloor.push({x,y});
   }
   const takeSpot=()=>{ if(!wallFloor.length) return null; return wallFloor.splice((rng()*wallFloor.length)|0,1)[0]; };
-  for(let i=0;i<15;i++){ const c=takeSpot(); if(!c) break;
+  for(let i=0;i<45;i++){ const c=takeSpot(); if(!c) break;
     world.rocks.push({x:c.x, y:c.y, type:'iron', gone:false}); world.rockBlock.add(gi(c.x,c.y)); }
-  for(let i=0;i<3;i++){ const c=takeSpot(); if(!c) break;
+  for(let i=0;i<9;i++){ const c=takeSpot(); if(!c) break;
     world.rocks.push({x:c.x, y:c.y, type:'silver', gone:false}); world.rockBlock.add(gi(c.x,c.y)); }
   // pickaxes lying in the early rooms
-  for(let i=0;i<3;i++){ const r=rooms[Math.min(rooms.length-1, i*2)], c=rc(r);
+  for(let i=0;i<5;i++){ const r=rooms[Math.min(rooms.length-1, i*2)], c=rc(r);
     world.pickups.push({x:Math.max(3,c.x-1+i), y:c.y, kind:'pickaxe', taken:false}); }
   // the forge, in a mid-dungeon stone room
   const fr=rooms[5], fc=rc(fr);
@@ -535,11 +535,11 @@ function generateDungeon(){
   goblins.push(makeKing(tc.x, tc.y+1));
   const openIn=(r)=>{ for(let i=0;i<60;i++){ const x=r.x+((rng()*r.w)|0), y=r.y+((rng()*r.h)|0);
     if(!isBlocked(x,y)) return {x,y}; } return rc(r); };
-  for(let i=2;i<8;i++){ const r=rooms[i];
+  for(let i=2;i<10;i++){ const r=rooms[i];
     const c1=openIn(r); goblins.push(makeRoamer(c1.x,c1.y,'claw',null));
     if(i%2===0){ const c2=openIn(r); goblins.push(makeRoamer(c2.x,c2.y,'archer',null)); } }
-  for(let i=0;i<7;i++){ const r=rooms[1+((rng()*(rooms.length-2))|0)]; const c=openIn(r); goblins.push(makeBat(c.x,c.y)); }
-  for(let i=0;i<5;i++){ const r=rooms[1+((rng()*6)|0)]; const c=openIn(r); goblins.push(makeRat(c.x,c.y)); }
+  for(let i=0;i<21;i++){ const r=rooms[1+((rng()*(rooms.length-2))|0)]; const c=openIn(r); goblins.push(makeBat(c.x,c.y)); }
+  for(let i=0;i<15;i++){ const r=rooms[1+((rng()*8)|0)]; const c=openIn(r); goblins.push(makeRat(c.x,c.y)); }
   // player arrives at the bottom of the entry shaft
   player.px=(dungeon.exit.x+0.5)*CELL; player.py=(dungeon.exit.y-1+0.5)*CELL;
   player.path=[]; player.targetCell=null;
@@ -735,28 +735,41 @@ function findPath(sx,sy,tx,ty,size){
     for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++) if(isBlocked(x+dx,y+dy)) return true; return false; };
   if(!inGrid(tx,ty) || blk(tx,ty)) return null;
   if(sx===tx && sy===ty) return [];
-  const key=(x,y)=>y*GRID+x;
+  // A* on a binary heap with reusable typed-array scratch — the 300x300 world demands it
+  const N=GRID*GRID;
+  if(!_pfG || _pfG.length!==N){ _pfG=new Float32Array(N); _pfPrev=new Int32Array(N); _pfMark=new Int32Array(N); _pfGen=0; }
+  const gen=++_pfGen, G=_pfG, PREV=_pfPrev, MARK=_pfMark;   // MARK: gen = open/seen this run · -gen = closed this run
   const H=(x,y)=>{ const dx=Math.abs(x-tx), dy=Math.abs(y-ty); return (dx+dy) + (Math.SQRT2-2)*Math.min(dx,dy); };
-  const g=new Map([[key(sx,sy),0]]), prev=new Map(), closed=new Set();
-  const open=[{x:sx,y:sy,f:H(sx,sy)}];
+  const heap=[], hf=[];
+  const hpush=(k,f)=>{ heap.push(k); hf.push(f); let i=heap.length-1;
+    while(i>0){ const p=(i-1)>>1; if(hf[p]<=hf[i]) break;
+      const tk=heap[p]; heap[p]=heap[i]; heap[i]=tk; const tf=hf[p]; hf[p]=hf[i]; hf[i]=tf; i=p; } };
+  const hpop=()=>{ const k=heap[0], last=heap.pop(), lf=hf.pop();
+    if(heap.length){ heap[0]=last; hf[0]=lf; let i=0;
+      for(;;){ const l=2*i+1, r=l+1; let m=i;
+        if(l<heap.length && hf[l]<hf[m]) m=l; if(r<heap.length && hf[r]<hf[m]) m=r; if(m===i) break;
+        const tk=heap[m]; heap[m]=heap[i]; heap[i]=tk; const tf=hf[m]; hf[m]=hf[i]; hf[i]=tf; i=m; } }
+    return k; };
+  const sk=sy*GRID+sx, tk=ty*GRID+tx;
+  G[sk]=0; MARK[sk]=gen; PREV[sk]=-1; hpush(sk, H(sx,sy));
   const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[-1,-1,Math.SQRT2]];
-  while(open.length){
-    let mi=0; for(let i=1;i<open.length;i++) if(open[i].f<open[mi].f) mi=i;
-    const cur=open.splice(mi,1)[0], ck=key(cur.x,cur.y);
-    if(cur.x===tx && cur.y===ty){
-      const path=[]; let k=ck; while(k!==key(sx,sy)){ path.unshift({x:k%GRID,y:(k/GRID)|0}); k=prev.get(k); } return path;
-    }
-    if(closed.has(ck)) continue; closed.add(ck);
+  while(heap.length){
+    const ck=hpop();
+    if(MARK[ck]===-gen) continue;
+    if(ck===tk){ const path=[]; let k=ck; while(k!==sk){ path.unshift({x:k%GRID, y:(k/GRID)|0}); k=PREV[k]; } return path; }
+    MARK[ck]=-gen;
+    const cx2=ck%GRID, cy2=(ck/GRID)|0;
     for(const [dx,dy,cost] of dirs){
-      const nx=cur.x+dx, ny=cur.y+dy; if(blk(nx,ny)) continue;
-      if(dx&&dy && (blk(cur.x+dx,cur.y)||blk(cur.x,cur.y+dy))) continue; // no corner cut
-      const nk=key(nx,ny); if(closed.has(nk)) continue;
-      const ng=g.get(ck)+cost;
-      if(!g.has(nk)||ng<g.get(nk)){ g.set(nk,ng); prev.set(nk,ck); open.push({x:nx,y:ny,f:ng+H(nx,ny)}); }
+      const nx=cx2+dx, ny=cy2+dy; if(blk(nx,ny)) continue;
+      if(dx&&dy && (blk(cx2+dx,cy2)||blk(cx2,cy2+dy))) continue; // no corner cut
+      const nk=ny*GRID+nx; if(MARK[nk]===-gen) continue;
+      const ng=G[ck]+cost;
+      if(MARK[nk]!==gen || ng<G[nk]){ G[nk]=ng; PREV[nk]=ck; MARK[nk]=gen; hpush(nk, ng+H(nx,ny)); }
     }
   }
   return null;
 }
+let _pfG=null, _pfPrev=null, _pfMark=null, _pfGen=0;   // pathfinder scratch, reused across calls
 function nearestOpen(tx,ty){
   if(!isBlocked(tx,ty)) return {x:tx,y:ty};
   for(let r=1;r<=6;r++) for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
@@ -864,16 +877,16 @@ function respawnGoblins(){                 // the woods west of the river are ne
   const westOpen=()=>{ for(let i=0;i<500;i++){ const x=2+((Math.random()*(maxX-2))|0), y=2+((Math.random()*(GRID-4))|0);
     if(!isBlocked(x,y) && !occupied(x,y,null)) return {x,y}; } return randOpenCell(); };
   const bows=[];
-  for(let i=0;i<2;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // 2 bow goblins…
-  for(let i=0;i<3;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // …trailed by 3 claws
+  for(let i=0;i<6;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // 6 bow goblins…
+  for(let i=0;i<9;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // …trailed by 9 claws
 }
 function spawnRoamers(){
   const maxX=Math.max(5, (world.creekMinX!=null?world.creekMinX:GRID)-2);   // stay on the west (goblin) bank
   const westOpen=()=>{ for(let i=0;i<500;i++){ const x=2+((Math.random()*(maxX-2))|0), y=2+((Math.random()*(GRID-4))|0);
     if(!isBlocked(x,y)) return {x,y}; } return randOpenCell(); };
   const bows=[];
-  for(let i=0;i<3;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // bow goblins
-  for(let i=0;i<7;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }               // followers
+  for(let i=0;i<9;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // bow goblins
+  for(let i=0;i<21;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // followers
   const wc=westOpen(); goblins.push(makeWitch(wc.x, wc.y));                                                                 // the goblin witch
 }
 const GOB_SPEED = CELL*1.5;          // archer walking speed
@@ -1282,7 +1295,7 @@ function spawnTurtles(){
   const shallow=world.water.filter(c=>c.ring===0 && !onBridge(c.x,c.y));   // don't hatch a turtle under a bridge
   if(!shallow.length) return;
   const used=new Set();
-  for(let n=0;n<5;n++){
+  for(let n=0;n<15;n++){
     let c=null;
     for(let i=0;i<60;i++){ const p=shallow[(Math.random()*shallow.length)|0];
       if(!used.has(p.y*GRID+p.x) && nearestDeep(p.x,p.y)){ c=p; break; } }
@@ -1993,21 +2006,21 @@ function makeDeer(leader, antlers, color, scale){
 }
 // deer scales are 10% smaller than before
 const buck = makeDeer(null, true, C_BUCK, 0.945);
-const does = [ makeDeer(buck,false,C_DOE,0.81), makeDeer(buck,false,C_DOE,0.81), makeDeer(buck,false,C_DOE,0.81) ];
+const does = []; for(let i=0;i<10;i++) does.push(makeDeer(buck,false,C_DOE,0.81));
 const mother = does[0];                                   // one doe is mother to the fawns
-const fawns = [ makeDeer(mother,false,C_FAWN,0.54), makeDeer(mother,false,C_FAWN,0.54) ];
+const fawns = []; for(let i=0;i<6;i++) fawns.push(makeDeer(does[i%does.length],false,C_FAWN,0.54));   // one fawn per mother — a doe can only nurse one at a time
 fawns.forEach(f=>{ f.fawn=true; f.followDist=FAWN_FOLLOW; f.hp=1; });
 const herd = [buck, ...does, ...fawns];
 
 // a second, larger herd — ~4x the number of animals, same scale as the first
 const buck2 = makeDeer(null, true, C_BUCK, 0.945);
-const does2 = []; for(let i=0;i<15;i++) does2.push(makeDeer(buck2,false,C_DOE,0.81));
+const does2 = []; for(let i=0;i<45;i++) does2.push(makeDeer(buck2,false,C_DOE,0.81));
 const mother2 = does2[0];
-const fawns2 = []; for(let i=0;i<8;i++){ const f=makeDeer(mother2,false,C_FAWN,0.54); f.fawn=true; f.followDist=FAWN_FOLLOW; f.hp=1; fawns2.push(f); }
+const fawns2 = []; for(let i=0;i<24;i++){ const f=makeDeer(does2[i%does2.length],false,C_FAWN,0.54); f.fawn=true; f.followDist=FAWN_FOLLOW; f.hp=1; fawns2.push(f); }
 const herd2 = [buck2, ...does2, ...fawns2];    // 24 animals (~4x of the first herd's 6)
 const allDeer = [...herd, ...herd2];
 const pendingDeer = [];                        // fawns born this frame, flushed into allDeer after the update loop
-const DEER_CAP = 90;                            // hard ceiling as a backstop; the real limit is food (see deerRoomToBreed)
+const DEER_CAP = 120;                            // hard ceiling as a backstop; the real limit is food (see deerRoomToBreed)
 function deerRoomToBreed(){                     // equilibrium: the herd only grows while there are ~9 grown bushes per deer
   const alive=allDeer.filter(d=>!d.dead && !d.gone).length + pendingDeer.length;
   const grown=world.bushes.reduce((n,b)=>n+((b.grow==null||b.grow>=1)?1:0), 0);
@@ -2395,10 +2408,9 @@ function spawnHerd(){
   const bc=rightCell();
   reset(buck); buck.hunger=0; buck.px=(bc.x+0.5)*CELL; buck.py=(bc.y+0.5)*CELL; deerWander(buck);
   for(const d of does){ reset(d); d.hunger=Math.random()*30;
-    const c=nearOpen(bc.x,bc.y,2,4); d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; deerWander(d); }
-  const mc={ x:cellOf(mother.px), y:cellOf(mother.py) };
-  for(const f of fawns){ reset(f); f.hunger=Math.random()*40;
-    const c=nearOpen(mc.x,mc.y,1,2); f.px=(c.x+0.5)*CELL; f.py=(c.y+0.5)*CELL; deerWander(f); }
+    const c=nearOpen(bc.x,bc.y,3,10); d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; deerWander(d); }
+  for(const f of fawns){ reset(f); f.hunger=Math.random()*40; const m=f.leader||mother;
+    const c=nearOpen(cellOf(m.px),cellOf(m.py),1,2); f.px=(c.x+0.5)*CELL; f.py=(c.y+0.5)*CELL; deerWander(f); }
 }
 function spawnHerd2(){
   // the big herd — east of the creek, a good distance from the first herd
@@ -2413,9 +2425,9 @@ function spawnHerd2(){
     if(!isBlocked(x,y) && Math.hypot(x-cellOf(buck.px), y-cellOf(buck.py))>18) bc={x,y}; }
   if(!bc) bc={ x:cellOf(buck.px), y:Math.min(GRID-2,cellOf(buck.py)+20) };
   reset(buck2); buck2.hunger=0; buck2.px=(bc.x+0.5)*CELL; buck2.py=(bc.y+0.5)*CELL; deerWander(buck2);
-  for(const d of does2){ reset(d); d.hunger=Math.random()*30; const c=nearOpen(bc.x,bc.y,8); d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; deerWander(d); }
-  const mc={ x:cellOf(mother2.px), y:cellOf(mother2.py) };
-  for(const f of fawns2){ reset(f); f.hunger=Math.random()*40; const c=nearOpen(mc.x,mc.y,3); f.px=(c.x+0.5)*CELL; f.py=(c.y+0.5)*CELL; deerWander(f); }
+  for(const d of does2){ reset(d); d.hunger=Math.random()*30; const c=nearOpen(bc.x,bc.y,25); d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; deerWander(d); }   // the big herd starts well spread, so early grazing doesn't strip one grove
+  for(const f of fawns2){ reset(f); f.hunger=Math.random()*40; const m=f.leader||buck2;
+    const c=nearOpen(cellOf(m.px),cellOf(m.py),2); f.px=(c.x+0.5)*CELL; f.py=(c.y+0.5)*CELL; deerWander(f); }
 }
 
 /* --- vector drawing helpers (neon glow) --- */
@@ -3244,7 +3256,7 @@ function drawMinimap(){
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
   const box=Math.max(140, 150*DPR);
   const bx=canvas.width-pad-box, by=pad+sz+ic*3.6;
-  const PX=4, mmScale=(fitScale*5)/4*mmZoom;                   // the old default camera height, from 4x higher (± the +/- buttons)
+  const PX=4, mmScale=(fitScale*15)/4*mmZoom;                  // the old default camera height, from 4x higher (± the +/- buttons)
   let pxPerCell=mmScale*CELL, viewCells=box/pxPerCell;
   if(viewCells>GRID){ viewCells=GRID; pxPerCell=box/viewCells; }   // fully zoomed out: the whole world fits the box
   let cx0=cellOf(player.px)-viewCells/2, cy0=cellOf(player.py)-viewCells/2;
@@ -3541,7 +3553,7 @@ function draw(){
   ctx.save();
   ctx.globalAlpha=0.10; ctx.strokeStyle=PAL.gridline; ctx.lineWidth=Math.max(1, DPR*0.6);
   ctx.beginPath();
-  for(let k=0;k<=GRID;k++){
+  for(let k=0;k<=GRID;k+=3){                                   // the visible grid marks 3m tiles
     const a=worldToScreen(k*CELL,0), b=worldToScreen(k*CELL,WORLD);
     ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
     const c=worldToScreen(0,k*CELL), d=worldToScreen(WORLD,k*CELL);
@@ -4658,7 +4670,7 @@ function seedFireflies(){                             // anchor a handful of fir
     if(world.terrain[gi(x-1,y)]===0||world.terrain[gi(x+1,y)]===0||world.terrain[gi(x,y-1)]===0||world.terrain[gi(x,y+1)]===0)
       banks.push({x,y});                                          // …touching grass: a bank
   }
-  for(let i=0;i<90 && banks.length;i++){
+  for(let i=0;i<240 && banks.length;i++){
     const b=banks[(Math.random()*banks.length)|0];
     fireflies.push({ ax:(b.x+0.5)*CELL, ay:(b.y+0.5)*CELL,
       rx:CELL*(0.6+Math.random()*1.6), ry:CELL*(0.4+Math.random()*1.0),
@@ -4877,7 +4889,7 @@ window.addEventListener('resize', resize);
 /* --- default view: centre on the player at 250% zoom --- */
 function setDefaultView(){
   recomputeZoomLimits();
-  cam.scale = Math.min(maxScale, fitScale*7.5);   // default in the middle of the 5×–10× band
+  cam.scale = Math.min(maxScale, fitScale*22.5);   // default mid-band — same view as before the world grew
   camFollow=true;
   const p=projOf(player.px, player.py);
   cam.ox = p.x - (canvas.width/2)/cam.scale;
@@ -5328,36 +5340,53 @@ function packSelf(){ return { id:net.myId, active:!DEDICATED, map:mapMode, px:pl
   wh:player.helmet&&player.eqHelmet?1:0, wa:player.armor&&player.eqArmor?1:0, wl:player.leggings&&player.eqLeggings?1:0, wc:player.chainmail&&player.eqChainmail?1:0 }; }
 function buildMe(){ const p=packSelf(); p.t='me'; return p; }
 function buildSnap(){
+  // Big-world diet: players+goblins ride every snap (20 Hz); deer every other snap (10 Hz);
+  // bushes/crops/rocks — slow-changing bulk — only about once a second.
+  net._snapN=(net._snapN||0)+1;
+  const extras = (animT - (net._lastEx!=null?net._lastEx:-9)) >= 1;
+  if(extras) net._lastEx=animT;
+  const withDeer = extras || (net._snapN%2)===0;
+  const players=[packSelf()];
+  for(const c of net.clients){ if(c.open && c.p.active) players.push(c.p); }
+  // creatures far from every player skip the fast stream (nothing draws them anyway); full lists ride the 1 Hz extras
+  const NEARB=45*CELL, anchors=players.filter(p=>p.active && (p.map||'forest')===mapMode);
+  const nearAny=(x,y)=>{ for(const a of anchors){ if(Math.hypot(a.px-x, a.py-y)<=NEARB) return true; } return false; };
   const gob=[]; for(const g of goblins){ if(g.gone) continue; g.nid=g.nid||net.nextNid++;
+    if(!extras && g.kind!=='boss' && g.kind!=='king' && !nearAny(g.px!=null?g.px:(g.x+0.5)*CELL, g.py!=null?g.py:(g.y+0.5)*CELL)) continue;
     gob.push({ i:g.nid, k:g.kind, x:g.px, y:g.py, bx:g.x, by:g.y, f:g.face, l:g.faceLeft?1:0,
       d:g.dead?1:0, t:Math.round(g.deadT||0), h:g.hp, lo:g.looted?1:0, st:g.st, sw:+((g.swingT||0).toFixed(2)), pu:+((g.punchT||0).toFixed(2)), ca:+((g.castT||0).toFixed(2)), ho:+((g.hopAmt||0).toFixed(2)),
       sk:g.srcKind||0, sa:g.antlers?1:0, sf:g.fawn?1:0 }); }
-  const deer=[]; for(const d of allDeer){ if(d.gone) continue; d.nid=d.nid||net.nextNid++;
+  const sn={ t:'snap', players, wt:+(worldTime.toFixed(1)), gob, gobFull:extras?1:0, cv:cave.unlocked?1:0 };
+  if(withDeer){ const deer=[]; for(const d of allDeer){ if(d.gone) continue; d.nid=d.nid||net.nextNid++;
+    if(!extras && !nearAny(d.px, d.py)) continue;
     deer.push({ i:d.nid, x:d.px, y:d.py, f:d.face, l:d.faceLeft?1:0, s:d.state, d:d.dead?1:0, t:Math.round(d.deadT||0),
       fw:d.fawn?1:0, an:d.antlers?1:0, pr:d.pregnant?1:0, sc:d.scale, h:d.hp }); }
-  const bush=[]; for(const b of world.bushes) bush.push(b.grow==null?[b.x,b.y]:[b.x,b.y,+(+b.grow).toFixed(2)]);
-  const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?1:2]);   // crops so the guest sees wheat ripen
-  const players=[packSelf()];
-  for(const c of net.clients){ if(c.open && c.p.active) players.push(c.p); }
-  return { t:'snap',
-    players, wt:+(worldTime.toFixed(1)),
-    gob, deer, bush, crops, cv:cave.unlocked?1:0,
-    rk:(mapMode==='dungeon'&&world.rocks)?world.rocks.map(r=>r.gone?1:0):null,
-    pk:(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null };
+    sn.deer=deer; sn.deerFull=extras?1:0; }
+  if(extras){
+    const bush=[]; for(const b of world.bushes) bush.push(b.grow==null?[b.x,b.y]:[b.x,b.y,+(+b.grow).toFixed(2)]);
+    const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?1:2]);   // crops so the guest sees wheat ripen
+    sn.bush=bush; sn.crops=crops;
+    sn.rk=(mapMode==='dungeon'&&world.rocks)?world.rocks.map(r=>r.gone?1:0):null;
+    sn.pk=(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null;
+  }
+  return sn;
 }
 function netApplySnap(m){                              // world portion of a snapshot (guest, matching map only)
-  for(let i=0;i<m.deer.length;i++){ const s=m.deer[i]; let d=allDeer[i]; if(!d){ d={path:[]}; allDeer[i]=d; }
+  if(m.deer){                                          // nid-keyed upsert; only a FULL list may prune the rest
+  const seenD=new Set();
+  for(const s of m.deer){ seenD.add(s.i); let d=allDeer.find(o=>o.nid===s.i); if(!d){ d={path:[], nid:s.i}; allDeer.push(d); }
     d.px=s.x; d.py=s.y; d.face=s.f; d.faceLeft=!!s.l; d.state=s.s; d.dead=!!s.d; d.deadT=s.t; d.gone=false;
     d.fawn=!!s.fw; d.antlers=!!s.an; d.pregnant=!!s.pr; d.scale=s.sc; d.hp=s.h; d.nid=s.i;
     d.color=d.fawn?C_FAWN:d.antlers?C_BUCK:C_DOE; }
-  allDeer.length=m.deer.length;
+  if(m.deerFull){ for(let i=allDeer.length-1;i>=0;i--){ if(!seenD.has(allDeer[i].nid)) allDeer.splice(i,1); } }
+  }
   const seen=new Set();
   for(const s of m.gob){ seen.add(s.i); let g=goblins.find(o=>o.nid===s.i); if(!g){ g={nid:s.i}; goblins.push(g); }
     g.kind=s.k; g.px=s.x; g.py=s.y; g.x=s.bx; g.y=s.by; g.face=s.f; g.faceLeft=!!s.l; g.dead=!!s.d; g.deadT=s.t; g.gone=false;
     g.hp=s.h; g.looted=!!s.lo; g.st=s.st; g.swingT=s.sw; g.punchT=s.pu; g.castT=s.ca; g.hopAmt=s.ho; if(g.kind==='bigskel') g.big=true;
     g.srcKind=s.sk||null; g.antlers=!!s.sa; g.fawn=!!s.sf; }
-  for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); }
-  world.bushes.length=0; for(const b of m.bush) world.bushes.push(b.length>2?{x:b[0],y:b[1],grow:b[2]}:{x:b[0],y:b[1]});
+  if(m.gobFull){ for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); } }
+  if(m.bush){ world.bushes.length=0; for(const b of m.bush) world.bushes.push(b.length>2?{x:b[0],y:b[1],grow:b[2]}:{x:b[0],y:b[1]}); }
   if(m.crops){ world.crops.clear();
     for(const [k,st] of m.crops) world.crops.set(k, {stage: st===0?'till':st===1?'seed':'wheat', t:0}); }
   if(m.cv && !cave.unlocked) setCaveUnlocked();
