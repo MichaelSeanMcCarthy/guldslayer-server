@@ -51,6 +51,7 @@
 
 /* --- config --- */
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
+const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
 const WORLD = GRID * CELL; // total world size
 const MOVE_SPEED = CELL * 3; // world units / second (50% of the original CELL*6)
@@ -94,10 +95,10 @@ const GROW_TIME = 10;           // seconds a respawned bush/tree takes to scale 
 const FIXED_SEED = 61803398;   // locks the map layout (change via R for a new map)
 const GEN = {
   treeClusters: 400,     // number of tree clumps (scaled for 300x300)
-  clusterMin: 3, clusterMax: 8,
-  treeDensity: 0.72,     // fill probability at a clump centre (2x2 trees)
-  bushBase: 0.006,       // bush chance on open cells anywhere
-  bushNearTree: 0.16,    // bush chance on open cells within 2 of a tree
+  clusterMin: 2, clusterMax: 4,   // clump radius in 3m TILES (each tree claims one full tile)
+  treeDensity: 0.72,     // fill probability at a clump centre (one tree per tile)
+  bushBase: 0.045,       // bush chance PER TILE on open ground anywhere (max one bush per tile)
+  bushNearTree: 0.5,     // bush chance per tile beside the woods
   cattailClump: 0.15,    // chance to start a cattail clump on a creek-edge water cell (3x)
 };
 
@@ -222,16 +223,22 @@ function generateWorld(){
     for(let x=left; x<left+w; x++) if(inGrid(x,y)) t[gi(x,y)] = 2;
   }
 
-  // --- 2x2 trees in organic clumps (each tree occupies a 2x2 footprint) ---
-  const area2Open = (x,y)=> (x>=0&&y>=0&&x+1<GRID&&y+1<GRID) &&
-    t[gi(x,y)]===0 && t[gi(x+1,y)]===0 && t[gi(x,y+1)]===0 && t[gi(x+1,y+1)]===0;
-  const placeTree = (x,y)=>{ t[gi(x,y)]=1; t[gi(x+1,y)]=1; t[gi(x,y+1)]=1; t[gi(x+1,y+1)]=1; trees.push({x,y}); };
+  // --- trees in organic clumps: each tree claims exactly ONE 3m tile (a 3x3 cell block,
+  //     tile-aligned) so the world keeps its one-object-per-tile standard ---
+  const TGRID = GRID/TILE;                                   // the world in tiles (100x100)
+  const tileOpen = (tx,ty)=>{ if(tx<0||ty<0||tx>=TGRID||ty>=TGRID) return false;
+    const x0=tx*TILE, y0=ty*TILE;
+    for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(t[gi(x0+dx,y0+dy)]!==0) return false;
+    return true; };
+  const placeTree = (tx,ty)=>{ const x0=tx*TILE, y0=ty*TILE;
+    for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) t[gi(x0+dx,y0+dy)]=1;
+    trees.push({x:x0,y:y0}); };                              // stored as the tile's top-left cell
   for(let c=0; c<GEN.treeClusters; c++){
-    const sx = 2+Math.floor(rnd()*(GRID-5)), sy = 2+Math.floor(rnd()*(GRID-5));
-    const R  = GEN.clusterMin + Math.floor(rnd()*(GEN.clusterMax-GEN.clusterMin+1));
+    const sx = 1+Math.floor(rnd()*(TGRID-2)), sy = 1+Math.floor(rnd()*(TGRID-2));
+    const R  = GEN.clusterMin + Math.floor(rnd()*(GEN.clusterMax-GEN.clusterMin+1));   // radius in tiles
     for(let dy=-R; dy<=R; dy++) for(let dx=-R; dx<=R; dx++){
       const x=sx+dx, y=sy+dy; const d=Math.hypot(dx,dy); if(d>R) continue;
-      if(rnd() < GEN.treeDensity*(1 - d/R) && area2Open(x,y)) placeTree(x,y);
+      if(rnd() < GEN.treeDensity*(1 - d/R) && tileOpen(x,y)) placeTree(x,y);
     }
   }
 
@@ -239,9 +246,8 @@ function generateWorld(){
   const clr=3;
   const inClear=(x,y)=> Math.abs(x-SPAWN.x)<=clr && Math.abs(y-SPAWN.y)<=clr;
   for(let i=trees.length-1;i>=0;i--){ const tr=trees[i];
-    if(inClear(tr.x,tr.y)||inClear(tr.x+1,tr.y)||inClear(tr.x,tr.y+1)||inClear(tr.x+1,tr.y+1)){
-      t[gi(tr.x,tr.y)]=0; t[gi(tr.x+1,tr.y)]=0; t[gi(tr.x,tr.y+1)]=0; t[gi(tr.x+1,tr.y+1)]=0; trees.splice(i,1);
-    }
+    let hit=false; for(let dy=0;dy<TILE&&!hit;dy++) for(let dx=0;dx<TILE&&!hit;dx++) if(inClear(tr.x+dx,tr.y+dy)) hit=true;
+    if(hit){ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) t[gi(tr.x+dx,tr.y+dy)]=0; trees.splice(i,1); }
   }
   for(let dy=-clr;dy<=clr;dy++) for(let dx=-clr;dx<=clr;dx++){
     const x=SPAWN.x+dx, y=SPAWN.y+dy; if(inGrid(x,y)&&t[gi(x,y)]===2) t[gi(x,y)]=0;
@@ -264,13 +270,18 @@ function generateWorld(){
   }
   for(const i of rimMid) t[i]=4;
 
-  // --- bushes (mostly near trees) + water list (ring kind) + creek bounds ---
-  const nearTree = (x,y)=>{ for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++) if(isTree(x+dx,y+dy)) return true; return false; };
-  const bushes=[], water=[]; let creekMinX=GRID, creekMaxX=-1;
+  // --- water list (ring kind) + creek bounds ---
+  const water=[]; let creekMinX=GRID, creekMaxX=-1;
   for(let y=0;y<GRID;y++) for(let x=0;x<GRID;x++){
     const v=t[gi(x,y)];
-    if(v===2||v===3||v===4){ water.push({x,y,ring:(v===3?0:v===4?1:2)}); if(x<creekMinX)creekMinX=x; if(x>creekMaxX)creekMaxX=x; continue; }
-    if(v!==0) continue;                                    // tree cell — skip decoration
+    if(v===2||v===3||v===4){ water.push({x,y,ring:(v===3?0:v===4?1:2)}); if(x<creekMinX)creekMinX=x; if(x>creekMaxX)creekMaxX=x; }
+  }
+  // --- bushes: at most ONE per 3m tile, planted at the tile's centre cell (mostly near the woods) ---
+  const nearTree = (x,y)=>{ for(let dy=-TILE;dy<=TILE;dy++)for(let dx=-TILE;dx<=TILE;dx++) if(isTree(x+dx,y+dy)) return true; return false; };
+  const bushes=[];
+  for(let ty=0;ty<TGRID;ty++) for(let tx=0;tx<TGRID;tx++){
+    if(!tileOpen(tx,ty)) continue;                         // the tile already holds something (tree/water)
+    const x=tx*TILE+1, y=ty*TILE+1;                        // centre cell of the tile
     const p = nearTree(x,y) ? GEN.bushNearTree : GEN.bushBase;
     if(rnd()<p) bushes.push({x,y});
   }
@@ -335,14 +346,14 @@ function placeCave(){
   cave.x=s.x0; cave.y=s.y0; cave.placed=true;
   for(let y=s.y0-1;y<s.y0+6;y++)for(let x=s.x0-1;x<s.x0+6;x++){ if(!inGrid(x,y)) continue;   // clear the hillside
     for(let i=world.trees.length-1;i>=0;i--){ const t=world.trees[i];
-      if(x>=t.x&&x<=t.x+1&&y>=t.y&&y<=t.y+1){
-        for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+      if(x>=t.x&&x<t.x+TILE&&y>=t.y&&y<t.y+TILE){
+        for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
         world.trees.splice(i,1); } }
     for(let i=world.bushes.length-1;i>=0;i--){ if(world.bushes[i].x===x&&world.bushes[i].y===y) world.bushes.splice(i,1); }
     for(let i=world.cattails.length-1;i>=0;i--){ if(world.cattails[i].x===x&&world.cattails[i].y===y) world.cattails.splice(i,1); }
     if(world.terrain[gi(x,y)]===1) world.terrain[gi(x,y)]=0;
   }
-  cave.door={x:s.x0+2, y:s.y0+4};                                        // a great door in the boulder's south face
+  cave.door={x:s.x0+2, y:s.y0+4};                                     // a great door in the boulder's south face
   for(let y=s.y0;y<s.y0+5;y++)for(let x=s.x0;x<s.x0+5;x++) world.caveBlock.add(gi(x,y));   // one solid 5x5 boulder
 }
 function setCaveUnlocked(){ if(!cave.placed || cave.unlocked) return;
@@ -572,8 +583,8 @@ function placeHenge(){
   for(let dy=-5;dy<=5;dy++)for(let dx=-5;dx<=5;dx++){                     // clear the sacred ground
     const x=spot.cx+dx, y=spot.cy+dy; if(!inGrid(x,y) || Math.hypot(dx,dy)>5) continue;
     for(let i=world.trees.length-1;i>=0;i--){ const t=world.trees[i];
-      if(x>=t.x&&x<=t.x+1&&y>=t.y&&y<=t.y+1){
-        for(const [ddx,ddy] of [[0,0],[1,0],[0,1],[1,1]]) if(inGrid(t.x+ddx,t.y+ddy)&&world.terrain[gi(t.x+ddx,t.y+ddy)]===1) world.terrain[gi(t.x+ddx,t.y+ddy)]=0;
+      if(x>=t.x&&x<t.x+TILE&&y>=t.y&&y<t.y+TILE){
+        for(let ddy=0;ddy<TILE;ddy++) for(let ddx=0;ddx<TILE;ddx++) if(inGrid(t.x+ddx,t.y+ddy)&&world.terrain[gi(t.x+ddx,t.y+ddy)]===1) world.terrain[gi(t.x+ddx,t.y+ddy)]=0;
         world.trees.splice(i,1); } }
     for(let i=world.bushes.length-1;i>=0;i--){ if(world.bushes[i].x===x&&world.bushes[i].y===y) world.bushes.splice(i,1); }
     for(let i=world.cattails.length-1;i>=0;i--){ if(world.cattails[i].x===x&&world.cattails[i].y===y) world.cattails.splice(i,1); }
@@ -622,8 +633,8 @@ function buildRoad(){
   // keep the verges open: fell every tree and pull every bush within 1 tile of the road
   const near1=(cx,cy)=>{ for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(inGrid(cx+dx,cy+dy)&&ps.has(gi(cx+dx,cy+dy))) return true; } return false; };
   for(let i=world.trees.length-1;i>=0;i--){ const t=world.trees[i];
-    let hit=false; for(let dy=0;dy<2&&!hit;dy++)for(let dx=0;dx<2&&!hit;dx++) if(near1(t.x+dx,t.y+dy)) hit=true;
-    if(hit){ for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+    let hit=false; for(let dy=0;dy<TILE&&!hit;dy++)for(let dx=0;dx<TILE&&!hit;dx++) if(near1(t.x+dx,t.y+dy)) hit=true;
+    if(hit){ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
       world.trees.splice(i,1); } }
   for(let i=world.bushes.length-1;i>=0;i--){ const b=world.bushes[i]; if(near1(b.x,b.y)) world.bushes.splice(i,1); }
   for(let i=world.cattails.length-1;i>=0;i--){ const c=world.cattails[i]; if(near1(c.x,c.y)) world.cattails.splice(i,1); }
@@ -636,7 +647,9 @@ function placeButcher(){                              // the butcher's stall sit
   butcher.x=btx; butcher.y=bty; butcher.w=w; butcher.h=h; butcher.doorX=btx; butcher.placed=true;
   const x0=btx-1, x1=btx+w, y0=bty-1, y1=bty+h+1;
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ if(inGrid(x,y)) world.terrain[gi(x,y)]=0; }
-  world.trees   = world.trees.filter(t=> t.x+1<x0 || t.x>x1 || t.y+1<y0 || t.y>y1);
+  world.trees   = world.trees.filter(t=>{ const out= t.x+TILE-1<x0 || t.x>x1 || t.y+TILE-1<y0 || t.y>y1;
+    if(!out) for(let dy=0;dy<TILE;dy++)for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+    return out; });
   world.bushes  = world.bushes.filter(b=> b.x<x0 || b.x>x1 || b.y<y0 || b.y>y1);
   world.cattails= world.cattails.filter(c=> c.x<x0 || c.x>x1 || c.y<y0 || c.y>y1);
 }
@@ -645,7 +658,9 @@ function placeStall(){
   stall.x=stx; stall.y=sty; stall.w=w; stall.h=h; stall.doorX=stx; stall.placed=true;
   const x0=stx-1, x1=stx+w, y0=sty-1, y1=sty+h+1;
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ if(inGrid(x,y)) world.terrain[gi(x,y)]=0; }
-  world.trees   = world.trees.filter(t=> t.x+1<x0 || t.x>x1 || t.y+1<y0 || t.y>y1);
+  world.trees   = world.trees.filter(t=>{ const out= t.x+TILE-1<x0 || t.x>x1 || t.y+TILE-1<y0 || t.y>y1;
+    if(!out) for(let dy=0;dy<TILE;dy++)for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+    return out; });
   world.bushes  = world.bushes.filter(b=> b.x<x0 || b.x>x1 || b.y<y0 || b.y>y1);
   world.cattails= world.cattails.filter(c=> c.x<x0 || c.x>x1 || c.y<y0 || c.y>y1);
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ if(!inGrid(x,y)) continue;   // dirt lot (edge tiles darker)
@@ -656,7 +671,9 @@ function placeArmorShop(){                            // a 4x4 armor shop east o
   armorShop.x=ax; armorShop.y=ay; armorShop.w=w; armorShop.h=h; armorShop.doorX=ax+Math.floor(w/2); armorShop.placed=true;
   const x0=ax-2, x1=ax+w+1, y0=ay-2, y1=ay+h+2;
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ if(inGrid(x,y)) world.terrain[gi(x,y)]=0; }
-  world.trees   = world.trees.filter(t=> t.x+1<x0-1 || t.x>x1+1 || t.y+1<y0-1 || t.y>y1+1);
+  world.trees   = world.trees.filter(t=>{ const out= t.x+TILE-1<x0-1 || t.x>x1+1 || t.y+TILE-1<y0-1 || t.y>y1+1;
+    if(!out) for(let dy=0;dy<TILE;dy++)for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+    return out; });
   world.bushes  = world.bushes.filter(b=> b.x<x0 || b.x>x1 || b.y<y0 || b.y>y1);
   world.cattails= world.cattails.filter(c=> c.x<x0 || c.x>x1 || c.y<y0 || c.y>y1);
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ if(!inGrid(x,y)) continue;
@@ -707,7 +724,9 @@ function placeShop(){
   const x0=sx-2, x1=sx+w+1, y0=sy-2, y1=sy+h+2;
   for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ if(inGrid(x,y)) world.terrain[gi(x,y)]=0; }
   // keep trees (2x2, canopies loom) and bushes off the whole lot
-  world.trees   = world.trees.filter(t=> t.x+1<x0-1 || t.x>x1+1 || t.y+1<y0-1 || t.y>y1+1);
+  world.trees   = world.trees.filter(t=>{ const out= t.x+TILE-1<x0-1 || t.x>x1+1 || t.y+TILE-1<y0-1 || t.y>y1+1;
+    if(!out) for(let dy=0;dy<TILE;dy++)for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+    return out; });
   world.bushes  = world.bushes.filter(b=> b.x<x0 || b.x>x1 || b.y<y0 || b.y>y1);
   world.cattails= world.cattails.filter(c=> c.x<x0 || c.x>x1 || c.y<y0 || c.y>y1);
   // dirt ground over the lot (edge tiles a shade darker)
@@ -839,12 +858,12 @@ function spawnGoblins(){
   const dirtR=3;
   for(let dy=-dirtR;dy<=dirtR;dy++)for(let dx=-dirtR;dx<=dirtR;dx++){
     const x=c.x+dx, y=c.y+dy; if(inGrid(x,y) && Math.hypot(dx,dy)<=dirtR+0.35) world.campDirt.push({x,y,edge:Math.hypot(dx,dy)>dirtR-0.7}); }
-  // clear trees off the camp so it reads clearly. Trees are 2x2 and their canopies rise ~2 tiles above
+  // clear trees off the camp so it reads clearly. A tree fills its 3m tile and its canopy rises above
   // the base, so measure to the NEAREST footprint cell and clear generously to keep canopies from looming.
   const clearR=dirtR+3.5, keep=[];
   for(const t of world.trees){
-    let nd=1e9; for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]) nd=Math.min(nd, Math.hypot((t.x+dx)-c.x,(t.y+dy)-c.y));
-    if(nd <= clearR){ for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]) if(inGrid(t.x+dx,t.y+dy)) world.terrain[gi(t.x+dx,t.y+dy)]=0; }
+    let nd=1e9; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) nd=Math.min(nd, Math.hypot((t.x+dx)-c.x,(t.y+dy)-c.y));
+    if(nd <= clearR){ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)) world.terrain[gi(t.x+dx,t.y+dy)]=0; }
     else keep.push(t);
   }
   world.trees = keep;
@@ -913,12 +932,12 @@ function goblinMove(g, speed, dt){    // advance an archer along its world-space
 }
 function nearestTree(g){
   let best=null, bd=1e9;
-  for(const t of world.trees){ const dd=Math.hypot((t.x+1)*CELL-g.px, (t.y+1)*CELL-g.py); if(dd<bd){ bd=dd; best=t; } }
+  for(const t of world.trees){ const dd=Math.hypot((t.x+1.5)*CELL-g.px, (t.y+1.5)*CELL-g.py); if(dd<bd){ bd=dd; best=t; } }
   return best;
 }
-function goblinChopApproach(g, tree){     // a reachable open cell beside the 2x2 tree
+function goblinChopApproach(g, tree){     // a reachable open cell beside the tree's 3m tile
   const cells=[], gcx=cellOf(g.px), gcy=cellOf(g.py);
-  for(let dy=-1;dy<=2;dy++) for(let dx=-1;dx<=2;dx++){ if(dx>=0&&dx<=1&&dy>=0&&dy<=1) continue;
+  for(let dy=-1;dy<=TILE;dy++) for(let dx=-1;dx<=TILE;dx++){ if(dx>=0&&dx<TILE&&dy>=0&&dy<TILE) continue;
     const x=tree.x+dx, y=tree.y+dy; if(!isBlocked(x,y)) cells.push({x,y}); }
   cells.sort((a,b)=>(Math.hypot(a.x-gcx,a.y-gcy)-Math.hypot(b.x-gcx,b.y-gcy)));
   for(const c of cells){ const path=findPath(gcx,gcy,c.x,c.y,1); if(path) return path.map(p=>({x:(p.x+0.5)*CELL,y:(p.y+0.5)*CELL})); }
@@ -1072,10 +1091,10 @@ function updateArcher(g, dt){
     if(!g.chopTree || !world.trees.includes(g.chopTree)){ g.chopTree=null; g.gstate='camp'; return; }
     if(g.gpath && g.gpath.length){ goblinMove(g, GOB_SPEED, dt); return; }   // still walking over
     const t=g.chopTree, gcx=cellOf(g.px), gcy=cellOf(g.py);
-    if(!(gcx>=t.x-1&&gcx<=t.x+2 && gcy>=t.y-1&&gcy<=t.y+2)){ g.gstate='camp'; g.chopTree=null; return; }
-    g.face=face4((t.x+1)*CELL-g.px, (t.y+1)*CELL-g.py); g.hopAmt=0;
+    if(!(gcx>=t.x-1&&gcx<=t.x+TILE && gcy>=t.y-1&&gcy<=t.y+TILE)){ g.gstate='camp'; g.chopTree=null; return; }
+    g.face=face4((t.x+1.5)*CELL-g.px, (t.y+1.5)*CELL-g.py); g.hopAmt=0;
     g.chopT=(g.chopT||0)+dt;
-    g.chipT=(g.chipT||0)-dt; if(g.chipT<=0){ g.chipT=1.0; for(let i=0;i<6;i++) spawnChip((t.x+1)*CELL,(t.y+1.4)*CELL); }
+    g.chipT=(g.chipT||0)-dt; if(g.chipT<=0){ g.chipT=1.0; for(let i=0;i<6;i++) spawnChip((t.x+1.5)*CELL,(t.y+2.4)*CELL); }
     if(g.chopT>=GOB_CHOP_TIME){ fellTree(t, g.px); g.arrows=3; g.chopTree=null; g.chopT=0; g.gstate='camp'; }  // tree → 3 arrows
     return;
   }
@@ -1817,13 +1836,13 @@ function goblinDies(g){ g.dead=true; g.deadT=0; g.gone=false; g.hopAmt=0; g.jT=n
 /* --- tree chopping with the axe tool --- */
 function treeAt(cx,cy){
   if(!isTree(cx,cy)) return null;
-  for(const t of world.trees) if(cx>=t.x&&cx<=t.x+1&&cy>=t.y&&cy<=t.y+1) return t;
+  for(const t of world.trees) if(cx>=t.x&&cx<t.x+TILE&&cy>=t.y&&cy<t.y+TILE) return t;
   return null;
 }
-function chopApproach(tree){                       // nearest reachable open cell beside the 2x2
+function chopApproach(tree){                       // nearest reachable open cell beside the tree's 3m tile
   const cells=[], pcx=cellOf(player.px), pcy=cellOf(player.py);
-  for(let dy=-1;dy<=2;dy++) for(let dx=-1;dx<=2;dx++){
-    if(dx>=0&&dx<=1&&dy>=0&&dy<=1) continue;
+  for(let dy=-1;dy<=TILE;dy++) for(let dx=-1;dx<=TILE;dx++){
+    if(dx>=0&&dx<TILE&&dy>=0&&dy<TILE) continue;
     const x=tree.x+dx, y=tree.y+dy; if(!isBlocked(x,y)) cells.push({x,y});
   }
   cells.sort((a,b)=> (Math.hypot(a.x-pcx,a.y-pcy)-Math.hypot(b.x-pcx,b.y-pcy)));
@@ -1873,18 +1892,18 @@ function updateChop(dt){
   if(!world.trees.includes(tree)){ player.chopTree=null; player.chopping=false; return; }
   if(player.path.length) return;                   // still walking over
   const pcx=cellOf(player.px), pcy=cellOf(player.py);
-  if(!(pcx>=tree.x-1&&pcx<=tree.x+2 && pcy>=tree.y-1&&pcy<=tree.y+2)){ player.chopTree=null; return; }
-  player.face = face4((tree.x+1)*CELL-player.px, (tree.y+1)*CELL-player.py);   // face the tree
+  if(!(pcx>=tree.x-1&&pcx<=tree.x+TILE && pcy>=tree.y-1&&pcy<=tree.y+TILE)){ player.chopTree=null; return; }
+  player.face = face4((tree.x+1.5)*CELL-player.px, (tree.y+1.5)*CELL-player.py);   // face the tree
   player.chopping=true; player.chopT+=dt;
   // a swing lands about once a second — burst of chips on each hit
-  player.chipT-=dt; if(player.chipT<=0){ player.chipT=1.0; for(let i=0;i<7;i++) spawnChip((tree.x+1)*CELL, (tree.y+1.4)*CELL); }
+  player.chipT-=dt; if(player.chipT<=0){ player.chipT=1.0; for(let i=0;i<7;i++) spawnChip((tree.x+1.5)*CELL, (tree.y+2.4)*CELL); }
   if(player.chopT>=CHOP_TIME){ startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi); player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
 }
 function fellTree(tree, fromWX){                     // topple a tree away from `fromWX`
-  const dir = fromWX < (tree.x+1)*CELL ? 1 : -1;
+  const dir = fromWX < (tree.x+1.5)*CELL ? 1 : -1;
   fallingTrees.push({ x:tree.x, y:tree.y, ang:0, dir, t:0 });
   const i=world.trees.indexOf(tree); if(i>=0) world.trees.splice(i,1);
-  for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]) world.terrain[gi(tree.x+dx,tree.y+dy)]=0;
+  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) world.terrain[gi(tree.x+dx,tree.y+dy)]=0;
 }
 function startFell(tree){ fellTree(tree, player.px); }   // player chops → topple away from the player
 function updateFelling(dt){
@@ -1896,8 +1915,8 @@ function updateFelling(dt){
 function updateStumps(dt){
   for(let i=world.stumps.length-1;i>=0;i--){ const s=world.stumps[i]; s.regrow-=dt;
     if(s.regrow<=0){
-      const ok=[[0,0],[1,0],[0,1],[1,1]].every(([dx,dy])=> inGrid(s.x+dx,s.y+dy) && world.terrain[gi(s.x+dx,s.y+dy)]===0);
-      if(ok){ for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]) world.terrain[gi(s.x+dx,s.y+dy)]=1; world.trees.push({x:s.x,y:s.y,grow:0}); world.stumps.splice(i,1); }  // grow in
+      let ok=true; for(let dy=0;dy<TILE&&ok;dy++) for(let dx=0;dx<TILE&&ok;dx++) if(!inGrid(s.x+dx,s.y+dy) || world.terrain[gi(s.x+dx,s.y+dy)]!==0) ok=false;
+      if(ok){ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) world.terrain[gi(s.x+dx,s.y+dy)]=1; world.trees.push({x:s.x,y:s.y,grow:0}); world.stumps.splice(i,1); }  // grow in
       else s.regrow=10;
     }
   }
@@ -2584,7 +2603,7 @@ function spawnChip(x,y){                       // wood chips flying off the tree
     g:230, life:0.6, max:0.6, size:CELL*0.14, color:PAL.pWood});
 }
 function treeImpact(tx,ty){                    // leaves + wood chunks burst when the trunk hits
-  const bx=(tx+1)*CELL, by=(ty+1.2)*CELL;
+  const bx=(tx+1.5)*CELL, by=(ty+2.2)*CELL;
   for(let i=0;i<28;i++){ const a=Math.random()*Math.PI*2, sp=50+Math.random()*180;
     addParticle({kind:'bit', x:bx+(Math.random()-0.5)*CELL*1.4, y:by+(Math.random()-0.5)*CELL*1.4,
       vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-50, g:210, life:0.7+Math.random()*0.6, max:1.3,
@@ -3238,7 +3257,7 @@ function buildMinimap(){                       // paint one pixel block per cell
   }
   if(mapMode==='forest'){
     g.fillStyle='#8a6a42'; for(const m of (world.pathDirt||[]).concat(world.campDirt||[], world.shopDirt||[])) g.fillRect(m.x*PX, m.y*PX, PX, PX);
-    g.fillStyle='#3e6b34'; for(const t of world.trees){ g.fillRect(t.x*PX, t.y*PX, PX*2, PX*2); }
+    g.fillStyle='#3e6b34'; for(const t of world.trees){ g.fillRect(t.x*PX, t.y*PX, PX*TILE, PX*TILE); }
     g.fillStyle='#57904a'; for(const b of world.bushes){ g.fillRect(b.x*PX+1, b.y*PX+1, PX-1, PX-1); }
     g.fillStyle='#8a5a34';
     for(const s of [shop, stall, butcher, armorShop]){ if(s.placed) g.fillRect(s.x*PX, s.y*PX, s.w*PX, s.h*PX); }
@@ -3564,7 +3583,7 @@ function draw(){
   // selection markers — flat ellipses (same aspect as the shadows)
   const selRing=(wx,wy,r)=>{ const c=worldToScreen(wx,wy); ctx.save(); ctx.strokeStyle=PAL.target;
     ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.beginPath(); ctx.ellipse(c.x,c.y,r,r*0.4,0,0,Math.PI*2); ctx.stroke(); ctx.restore(); };
-  if(player.chopTree){ const tr=player.chopTree; selRing((tr.x+1)*CELL,(tr.y+1.9)*CELL, CELL*cam.scale*0.95); }
+  if(player.chopTree){ const tr=player.chopTree; selRing((tr.x+1.5)*CELL,(tr.y+2.9)*CELL, CELL*cam.scale*0.95); }
   else if(player.targetCell){ selRing((player.targetCell.x+0.5)*CELL,(player.targetCell.y+0.5)*CELL, CELL*cam.scale*0.42); }
 
   // upright sprites — painter's algorithm by depth (world y), back to front
@@ -3590,9 +3609,9 @@ function draw(){
     for(const tp of world.tapestries) items.push({wx:(tp.x+0.5)*CELL, wy:(tp.y+0.95)*CELL, kind:25});
     items.push({wx:(dungeon.exit.x+0.5)*CELL, wy:(dungeon.exit.y+0.95)*CELL, kind:26});
   }
-  for(const t of world.trees)    items.push({wx:(t.x+1)*CELL, wy:(t.y+1.9)*CELL, kind:0, grow:t.grow});   // 2x2 footprint base
-  for(const s2 of world.stumps)  items.push({wx:(s2.x+1)*CELL, wy:(s2.y+1.6)*CELL, kind:7});
-  for(const ft of fallingTrees)  items.push({wx:(ft.x+1)*CELL, wy:(ft.y+1.9)*CELL, kind:8, ref:ft});
+  for(const t of world.trees)    items.push({wx:(t.x+1.5)*CELL, wy:(t.y+2.9)*CELL, kind:0, grow:t.grow});   // one 3m tile per tree, trunk at the tile's south-centre
+  for(const s2 of world.stumps)  items.push({wx:(s2.x+1.5)*CELL, wy:(s2.y+2.6)*CELL, kind:7});
+  for(const ft of fallingTrees)  items.push({wx:(ft.x+1.5)*CELL, wy:(ft.y+2.9)*CELL, kind:8, ref:ft});
   for(const b of world.bushes)   items.push({wx:(b.x+0.5)*CELL, wy:(b.y+0.5)*CELL, kind:1, grow:b.grow});
   for(const c of world.cattails){ if(world.bridgeSet && world.bridgeSet.has(gi(c.x,c.y))) continue; items.push({wx:(c.x+0.5)*CELL, wy:(c.y+0.5)*CELL, kind:2, phase:c.x*0.7+c.y*1.3}); }  // hide cattails under the bridge
   // while chopping, draw the player just in front of the target tree so the swing is visible
@@ -3615,8 +3634,8 @@ function draw(){
     else if(player.propTarget && world.shopProps.includes(player.propTarget)){          // punching apart a barrel / crate — marked like an enemy
       const pr=player.propTarget; ring={ x:(pr.x+0.5)*CELL, y:(pr.y+0.8)*CELL, rr:u*0.45, col:'214,58,42' };
     }
-    else if(player.chopTree && world.trees.includes(player.chopTree)){                  // felling a tree (2x2 footprint)
-      const t=player.chopTree; ring={ x:(t.x+1)*CELL, y:(t.y+1.6)*CELL, rr:u*0.85, col:'74,140,255' };
+    else if(player.chopTree && world.trees.includes(player.chopTree)){                  // felling a tree (one 3m tile)
+      const t=player.chopTree; ring={ x:(t.x+1.5)*CELL, y:(t.y+2.6)*CELL, rr:u*0.85, col:'74,140,255' };
     }
     else if(player.harvestTarget!=null){                                               // reaping a wheat plot
       const k=player.harvestTarget, c=world.crops.get(k);
@@ -3737,7 +3756,7 @@ function drawMineTimer(){                          // countdown above an ore roc
 function drawChopTimer(){
   if(!player.chopTree || !player.chopping) return;
   const tr=player.chopTree, u=CELL*cam.scale;
-  const s=worldToScreen((tr.x+1)*CELL, (tr.y+1.9)*CELL);
+  const s=worldToScreen((tr.x+1.5)*CELL, (tr.y+2.9)*CELL);
   const cx=s.x, w=Math.max(34, u*1.9), h=Math.max(6, u*0.26);
   const y=s.y - u*4.2, x=cx-w/2;                                 // sit above the canopy
   const p=Math.min(1, player.chopT/CHOP_TIME);
