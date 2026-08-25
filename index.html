@@ -50,12 +50,12 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-24 · j';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-24 · k';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
 const WORLD = GRID * CELL; // total world size
-const MOVE_SPEED = CELL * 3; // world units / second (50% of the original CELL*6)
+const MOVE_SPEED = CELL * 2.4; // world units / second (world pace cut 20% — was CELL*3)
 const C_CYAN  = '#38f2ff';
 const C_GREEN = '#4dff8f';
 const C_BUSH  = '#57d76b';
@@ -67,9 +67,9 @@ const C_FAWN  = '#bf9e5e';   // fawn  (tan)
 const SPAWN = { x: Math.floor(GRID/2), y: Math.floor(GRID/2) };  // centre cell
 
 /* --- deer behaviour tuning --- */
-const BUCK_SPEED = CELL * 1.05; // world units / second (calm; 25% slower than before)
-const RUN_SPEED  = CELL * 2.1;  // 2x calm speed — a running bolt from the player
-const CHARGE_SPEED = CELL * 3.2; // an aggressive buck charging the player
+const BUCK_SPEED = CELL * 0.84; // world units / second (calm; 20% slower world pace)
+const RUN_SPEED  = CELL * 1.68; // 2x calm speed — a running bolt from the player (20% slower world pace)
+const CHARGE_SPEED = CELL * 2.56; // an aggressive buck charging the player (20% slower world pace)
 const BUCK_ATTACK_CD = 4;       // seconds between buck attacks
 const BUCK_DAMAGE = 6;          // HP points per hit
 const BOSS_HP = 200;            // the goblin boss is a fortress of meat
@@ -77,8 +77,8 @@ const BOULDER_CD = 3;           // seconds between boss boulder throws
 const BOULDER_DMG = 5;          // explosion damage to every player within the blast
 const BOULDER_RADIUS_T = 3;     // blast radius in tiles
 const DMG_FLASH = 1.0;          // seconds the lost-HP white chunks linger
-const TURTLE_SPEED = CELL * 1.1;   // turtles paddle home slowly
-const TURTLE_RUN   = CELL * 2.6;   // turtles bolt for deep water when scared
+const TURTLE_SPEED = CELL * 0.88;  // turtles paddle home slowly (20% slower world pace)
+const TURTLE_RUN   = CELL * 2.08;  // turtles bolt for deep water when scared (20% slower world pace)
 const TURTLE_FLEE_R = 3;           // player within this many tiles -> dive
 const TURTLE_SAFE_R = 5;           // player this far from the dive spot -> resurface
 const TURTLE_HIDE_MIN = 10;        // seconds a turtle stays underwater no matter what
@@ -909,7 +909,7 @@ function spawnRoamers(){
   for(let i=0;i<21;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // followers
   const wc=westOpen(); goblins.push(makeWitch(wc.x, wc.y));                                                                 // the goblin witch
 }
-const GOB_SPEED = CELL*1.5;          // archer walking speed
+const GOB_SPEED = CELL*1.2;          // archer walking speed (20% slower world pace)
 const WITCH_SPEED = MOVE_SPEED;      // the witch glides as fast as a human hero
 const GOB_CHOP_TIME = 4;             // seconds a goblin spends felling a tree for arrows
 function goblinDance(g, dt){          // idle camp behaviour: sway & occasionally leap
@@ -1468,6 +1468,7 @@ const FORGE_ITEMS = [
   { key:'sword', name:'Iron Sword', cost:15, cur:'iron', dmg:'7-11', btn:'Forge', verb:'forged',
     give(){ player.sword++; }, owned(){ return player.sword? 'owned: '+player.sword : ''; } },
   { key:'gaxe',  name:'True Gleaming Axe', cost:20, cur:'iron', dmg:'24-36', btn:'Forge', verb:'forged', costText:'20 iron + 5 silver',
+    needs:[{amt:20,cur:'iron',label:'20 iron'},{amt:5,cur:'silver',label:'5 silver'}],
     can(){ return player.iron>=20 && player.silver>=5; }, pay(){ player.iron-=20; player.silver-=5; },
     give(){ player.gaxe++; },
     fail(){ return player.iron<20 ? 'Not enough iron ('+player.iron+'/20)' : 'Not enough silver ('+player.silver+'/5)'; },
@@ -1482,8 +1483,10 @@ const ARMOR_ITEMS = [
 ];
 const BUTCHER_ITEMS = [
   { key:'jerky', name:'Venison Jerky', cost:1, cur:'meat', btn:'Smoke', verb:'smoked', costText:'1 Deer Meat',
+    needs:[{amt:1,cur:'meat',label:'1 Deer Meat'}],
     give(){ player.jerky=(player.jerky||0)+1; }, owned(){ return player.jerky? 'owned: '+player.jerky : ''; } },
   { key:'meal', name:'Adventure Meal', btn:'Cook', verb:'cooked', costText:'5 Deer Meat + 20 Wheat',
+    needs:[{amt:5,cur:'meat',label:'5 Deer Meat'},{amt:20,cur:'wheat',label:'20 Wheat'}],
     can(){ return (player.meat||0)>=5 && (player.wheat||0)>=20; }, pay(){ player.meat-=5; player.wheat-=20; },
     give(){ player.meal=(player.meal||0)+1; },
     fail(){ return (player.meat||0)<5 ? 'Not enough Deer Meat ('+(player.meat||0)+'/5)' : 'Not enough Wheat ('+(player.wheat||0)+'/20)'; },
@@ -4225,15 +4228,27 @@ function drawShopUI(){
     ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.font='bold '+Math.round(Math.max(14, row.h*0.34))+'px system-ui, sans-serif';
     ctx.fillText(it.name, lx+iu*2.1, midY-row.h*0.14);
-    ctx.fillStyle=PAL.shopWall; ctx.font=Math.round(Math.max(11, row.h*0.26))+'px system-ui, sans-serif';
+    ctx.font=Math.round(Math.max(11, row.h*0.26))+'px system-ui, sans-serif';
     const ow=it.owned(); const dmgStr=it.dmg?(String(it.dmg).startsWith('+')?'    '+it.dmg:'    DMG '+it.dmg):'';
-    ctx.fillText('Cost: '+(it.costText||(it.cost+' '+cur))+(it.eye?' + Witch Eye':'')+dmgStr+(it.prot&&!String(it.prot).startsWith('+')?'    Blocks '+it.prot+' DMG':'')+(ow?'    '+ow:''), lx+iu*2.1, midY+row.h*0.2);
-    const B=row.craft, can=player[cur]>=it.cost;
-    rect(B.x, B.y, B.w, B.h, can?PAL.shopRoof:PAL.shopWallSh);
+    // cost, ingredient by ingredient — anything you're short of reads in red
+    const MISS='#e2493a';
+    const needs=it.needs || [{amt:it.cost, cur, label:it.cost+' '+cur}];
+    let tx2=lx+iu*2.1; const cy2=midY+row.h*0.2;
+    const put=(s,col)=>{ ctx.fillStyle=col; ctx.fillText(s, tx2, cy2); tx2+=ctx.measureText(s).width; };
+    put('Cost: ', PAL.shopWall);
+    needs.forEach((n,i)=>{ if(i) put(' + ', PAL.shopWall);
+      put(n.label, (player[n.cur]||0)>=n.amt ? PAL.shopWall : MISS); });
+    if(it.eye) put(' + Witch Eye', (player.witchEye||0)>=1 ? PAL.shopWall : MISS);
+    put(dmgStr+(it.prot&&!String(it.prot).startsWith('+')?'    Blocks '+it.prot+' DMG':'')+(ow?'    '+ow:''), PAL.shopWall);
+    // the craft button: green when you can afford it, red when you can't (grey once it's owned)
+    const B=row.craft, ownedOut=it.has && it.has();
+    const can = !ownedOut && (it.can ? it.can() : player[cur]>=(it.cost||0)) && (!it.eye || (player.witchEye||0)>=1);
+    rect(B.x, B.y, B.w, B.h, ownedOut ? PAL.shopWallSh : (can ? '#3e7d3c' : '#8e2f27'));
     ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.strokeRect(B.x,B.y,B.w,B.h);
-    ctx.fillStyle=can?PAL.panelHi:PAL.dirt; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle=ownedOut?PAL.dirt:PAL.panelHi; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.font='bold '+Math.round(Math.max(13, B.h*0.4))+'px system-ui, sans-serif';
     ctx.fillText(it.btn||'Craft', B.x+B.w/2, B.y+B.h/2);
+    ctx.textAlign='left';
   }
   // close button
   const C=L.closeBtn;
