@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-24 · k';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · a';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -2354,12 +2354,9 @@ function updateDeer(d, dt){
   const hungry = d.hunger >= HUNGER_TIME;
   const pd = playerDist(d);
   if(d.antlers){                                                      // bucks are bold — they charge & attack
-    if(hungry){ d.angry=false; d.planted=false; }                     // hunger wins — go find a bush even with the player close
-    else {
-      if(pd <= 5) d.angry=true; else if(pd > 6){ d.angry=false; d.planted=false; }  // disengage & un-plant once 6+ away
-      if(d.angry){ buckCharge(d, dt, pd); return; }
-      if(d.wantMate || d.mateTarget){ if(buckMate(d, dt)) return; }   // every 3rd meal, court the nearest doe
-    }
+    if(pd <= 5) d.angry=true; else if(pd > 6){ d.angry=false; d.planted=false; }  // disengage & un-plant once 6+ away
+    if(d.angry){ buckCharge(d, dt, pd); return; }                     // a threatened buck stands and fights — hungry or not
+    if(!hungry && (d.wantMate || d.mateTarget)){ if(buckMate(d, dt)) return; }   // every 3rd meal, court the nearest doe (hunger comes first)
     if(d.state==='flee'||d.state==='alert'){ d.state='wander'; d.path=[]; }
   } else {                                                            // does & fawns are shy
     if(pd < 3){ d.state='flee'; fleeStep(d, dt, RUN_SPEED); return; } // too close — always bolt
