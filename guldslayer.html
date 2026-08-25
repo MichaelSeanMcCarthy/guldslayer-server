@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · g';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · h';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -3840,11 +3840,6 @@ function draw(){
     drawInventory();        // wood count, left (only when you have wood)
     drawInvButton();        // satchel, bottom-right → opens the inventory screen
     drawBuildGhost();       // ground-select: the building's placement ghost
-    drawShopUI();           // crafting modal, when the shop is open
-    drawAltarUI();          // altar rites, when communing at the henge
-    drawInvUI();            // inventory screen, when open
-    drawBuildUI();          // the building catalog
-    drawSiteUI();           // a build site's progress panel
   }
   drawHearts();             // player HP, top-left
   drawStamina();            // stamina meter, under the hearts
@@ -3852,6 +3847,13 @@ function draw(){
     drawGuldHUD();            // GULD purse under the portrait
   drawTimeHUD();            // the day dial — sun and moon riding the sky band
   drawMinimap();            // the world from on high, below the dial
+  if(!player.dead){         // modal panels paint LAST — nothing (minimap, dial, hearts) may cover them
+    drawShopUI();           // crafting modal, when the shop is open
+    drawAltarUI();          // altar rites, when communing at the henge
+    drawInvUI();            // inventory screen, when open
+    drawBuildUI();          // the building catalog
+    drawSiteUI();           // a build site's progress panel
+  }
   // drawZoomHUD();         // zoom read-out retired — the 5×–10× band is settled (re-enable to tune again)
 }
 function drawHurtFlash(){
@@ -4462,25 +4464,24 @@ function drawSiteUI(){
   rect(L.px, L.py, L.pw, L.ph, PAL.panelBg);
   ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(L.px,L.py,L.pw,L.ph);
   const lx=L.px+L.pad;
-  ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.font='bold '+Math.round(Math.max(16, L.ph*0.13))+'px system-ui, sans-serif';
-  ctx.fillText('Under construction: '+B.name, lx, L.py+L.ph*0.17);
-  ctx.font=Math.round(Math.max(12, L.ph*0.09))+'px system-ui, sans-serif';
-  ctx.fillStyle=PAL.shopWall;
-  ctx.fillText(B.sum, lx, L.py+L.ph*0.34);
-  ctx.fillStyle='#c9a06a'; ctx.font='bold '+Math.round(Math.max(14, L.ph*0.11))+'px system-ui, sans-serif';
-  ctx.fillText(s.have+' / '+s.need+' wood added', lx, L.py+L.ph*0.5);
-  ctx.fillStyle=PAL.shopWall; ctx.font=Math.round(Math.max(11, L.ph*0.08))+'px system-ui, sans-serif';
-  ctx.fillText('Anyone can add wood \u2014 when it\u2019s full, the building rises for everyone.', lx, L.py+L.ph*0.63);
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  const fit=(txt, x, y, maxW, fs, bold, col)=>{               // shrink a line until it fits the panel
+    let f=fs; ctx.font=(bold?'bold ':'')+Math.round(f)+'px system-ui, sans-serif';
+    while(f>8 && ctx.measureText(txt).width>maxW){ f--; ctx.font=(bold?'bold ':'')+Math.round(f)+'px system-ui, sans-serif'; }
+    ctx.fillStyle=col; ctx.fillText(txt, x, y);
+  };
+  const wMain=L.pw-L.pad*2, wTitle=L.closeBtn.x-lx-L.pad*0.5;  // the title also dodges the close button
+  fit('Under construction: '+B.name, lx, L.py+L.ph*0.17, wTitle, Math.max(16, L.ph*0.13), true, PAL.panelHi);
+  fit(B.sum, lx, L.py+L.ph*0.34, wMain, Math.max(12, L.ph*0.09), false, PAL.shopWall);
+  fit(s.have+' / '+s.need+' wood added', lx, L.py+L.ph*0.5, wMain, Math.max(14, L.ph*0.11), true, '#c9a06a');
+  if(shop.msgT>0 && shop.msg) fit(shop.msg, lx, L.py+L.ph*0.63, wMain, Math.max(11, L.ph*0.08), true, '#ffdf9e');   // a warning takes the note's line
+  else fit('Anyone can add wood \u2014 built for everyone when full.', lx, L.py+L.ph*0.63, wMain, Math.max(11, L.ph*0.08), false, PAL.shopWall);
   const A=L.addBtn, can=player.wood>0 && s.have<s.need;
   rect(A.x,A.y,A.w,A.h, can?'#3e7d3c':'#8e2f27');
   ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.5); ctx.strokeRect(A.x,A.y,A.w,A.h);
   ctx.fillStyle=PAL.panelHi; ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.font='bold '+Math.round(A.h*0.42)+'px system-ui, sans-serif';
   ctx.fillText('Add Wood (+'+Math.min(5, s.need-s.have, Math.max(0,player.wood))+')', A.x+A.w/2, A.y+A.h/2);
-  if(shop.msgT>0 && shop.msg){ ctx.fillStyle='#ffdf9e'; ctx.textAlign='center';
-    ctx.font=Math.round(Math.max(11, L.ph*0.08))+'px system-ui, sans-serif';
-    ctx.fillText(shop.msg, L.px+L.pw/2, L.addBtn.y-Math.max(11,10*DPR)); }
   const C=L.closeBtn;
   ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(C.x,C.y,C.w,C.h);
   ctx.beginPath(); ctx.moveTo(C.x+C.w*0.28,C.y+C.h*0.28); ctx.lineTo(C.x+C.w*0.72,C.y+C.h*0.72);
