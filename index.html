@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-24 · i';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-24 · j';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -4775,6 +4775,8 @@ function loop(ts){
       if(Math.hypot(player.px-(pk2.x+0.5)*CELL, player.py-(pk2.y+0.5)*CELL)<CELL*1.2){
         pk2.taken=true; player.pickaxe=1; addFloat('+ Pickaxe!', player.px, player.py-CELL*1.9, '#cfd6de');
         netSend({t:'pick', map:mapMode, i:world.pickups.indexOf(pk2)}); } } }
+    for(const t2 of turtles) updateTurtle(t2, dt);   // local ambience the host doesn't stream: turtles bask & dive…
+    fishTimer-=dt; if(fishTimer<=0){ fishTimer=6+Math.random()*8; if(mapMode==='forest') spawnFishAtDeep(); }   // …and fish jump
     updateFloats(dt); updateParticles(dt);
     worldTime+=dt;                                  // the sun keeps moving between server snapshots
     if(foodCD>0) foodCD=Math.max(0, foodCD-dt);
@@ -5436,6 +5438,7 @@ function netOnData(m, fromClient){
   if(MAP_FX[m.t] && m.map && m.map!==mapMode) return;   // effects on a map we're not looking at
   if(m.t==='wel'){ if(mapMode==='dungeon') mapMode='forest'; savedDungeon=null; savedForest=null;
     net.myId=m.id||1; worldSeed=(m.seed>>>0); generateWorld(); netClearWorldForGuest();
+    spawnTurtles();                                   // turtles are ambience — each screen keeps its own basking in the shallows
     if(m.cv) setCaveUnlocked();
     net.gotSeed=true; mpEnterTavern(); }
   else if(m.t==='snap'){ if(net.mode==='guest'){
