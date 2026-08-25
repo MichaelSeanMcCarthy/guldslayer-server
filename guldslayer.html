@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · r';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · s';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -4575,7 +4575,9 @@ function updateHarvest(dt){
     const gain=Math.ceil((n/3)*(1+cardVal('forager')));                             // a full plot yields 3 wheat (+Forager card) — no stamina;
     player.wheat=(player.wheat||0)+gain;                                            // wheat only feeds you cooked into a meal
     addFloat('+'+gain+' wheat', player.px, player.py-CELL*1.9, PAL.wheatStalk);
-    if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'harv', key});   // tell the host this plot was reaped
+    if(typeof net!=='undefined' && net.mode==='guest'){ netSend({t:'cropAct', map:mapMode, op:'harv', key});   // tell the host this plot was reaped
+      const H=(net._reapHold=net._reapHold||new Map());                                   // and guard the plot against stale snapshots
+      for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) H.set(gi(bx+dx,by+dy), 0); }
     spawnHarvestFX(px, py); player.harvestTarget=null; player.carcassTarget=null;
   } else {
     player.repathH-=dt;
@@ -5009,13 +5011,84 @@ function drawBrainButton(){                            // the Mind — a little 
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(owned, cx+s*0.32, cy-s*0.29); }
   ctx.restore();
 }
+function drawCardArt(id, cx, cy, s){                   // cute little icon art, one per card
+  if(id==='lumberjack'){                               // a stout axe against a stump
+    rect(cx-s*0.5, cy+s*0.28, s, s*0.22, PAL.trunk);                       // the stump
+    beam(cx-s*0.34, cy+s*0.34, cx+s*0.3, cy-s*0.3, s*0.13, '#8a5a34');     // haft
+    tri([cx+s*0.06,cy-s*0.52],[cx+s*0.62,cy-s*0.28],[cx+s*0.16,cy+s*0.02], PAL.axeBlade);   // blade
+  } else if(id==='swordsman'){                         // a proud little sword
+    beam(cx, cy+s*0.18, cx, cy-s*0.5, s*0.14, '#8e9aa8');                  // blade
+    beam(cx-s*0.028, cy+s*0.18, cx-s*0.028, cy-s*0.48, s*0.05, '#c8d2dc');// edge highlight
+    tri([cx-s*0.09,cy-s*0.5],[cx+s*0.09,cy-s*0.5],[cx,cy-s*0.68], '#8e9aa8');
+    rect(cx-s*0.3, cy+s*0.14, s*0.6, s*0.12, '#e7c877');                   // crossguard
+    beam(cx, cy+s*0.26, cx, cy+s*0.5, s*0.12, PAL.trunk);                  // grip
+    circle(cx, cy+s*0.56, s*0.1, '#e7c877');                               // pommel
+  } else if(id==='marksman'){                          // bow, string and arrow
+    ctx.save(); ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(2,s*0.1);
+    ctx.beginPath(); ctx.arc(cx-s*0.08, cy, s*0.5, -Math.PI*0.42, Math.PI*0.42); ctx.stroke();
+    ctx.lineWidth=Math.max(1,s*0.045); ctx.strokeStyle='#e8e2d2';
+    ctx.beginPath(); ctx.moveTo(cx-s*0.08+Math.cos(-Math.PI*0.42)*s*0.5, cy+Math.sin(-Math.PI*0.42)*s*0.5);
+    ctx.lineTo(cx-s*0.08+Math.cos(Math.PI*0.42)*s*0.5, cy+Math.sin(Math.PI*0.42)*s*0.5); ctx.stroke(); ctx.restore();
+    beam(cx-s*0.34, cy, cx+s*0.42, cy, s*0.06, PAL.trunk);                 // arrow shaft
+    tri([cx+s*0.42,cy-s*0.12],[cx+s*0.42,cy+s*0.12],[cx+s*0.6,cy], PAL.axeBlade);
+  } else if(id==='thickhide'){                         // a studded hide shield
+    ctx.fillStyle='#8a5a34'; ctx.beginPath();
+    ctx.moveTo(cx-s*0.42, cy-s*0.4); ctx.lineTo(cx+s*0.42, cy-s*0.4);
+    ctx.lineTo(cx+s*0.42, cy+s*0.08); ctx.quadraticCurveTo(cx+s*0.4, cy+s*0.44, cx, cy+s*0.58);
+    ctx.quadraticCurveTo(cx-s*0.4, cy+s*0.44, cx-s*0.42, cy+s*0.08); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#5c3a1e'; ctx.lineWidth=Math.max(2,s*0.07); ctx.stroke();
+    circle(cx, cy, s*0.11, '#e7c877');                                     // boss stud
+  } else if(id==='forager'){                           // three wheat stalks
+    for(const dx of [-0.26, 0, 0.26]){
+      beam(cx+dx*s, cy+s*0.5, cx+dx*s, cy-s*0.28, s*0.06, PAL.wheatStalk||'#c9a23a');
+      for(let i=0;i<3;i++) circle(cx+dx*s+(i%2?s*0.08:-s*0.08), cy-s*0.32-i*s*0.12, s*0.07, '#e3c860'); }
+  } else if(id==='ironbelly'){                         // a hearty drumstick
+    drawDrumstick(cx, cy, s*0.85);
+  } else if(id==='mender'){                            // a mending heart
+    heart(cx, cy, s*0.5, PAL.heartFull);
+    beam(cx+s*0.26, cy-s*0.4, cx+s*0.26, cy-s*0.16, s*0.05, '#fff');       // a little sparkle
+    beam(cx+s*0.14, cy-s*0.28, cx+s*0.38, cy-s*0.28, s*0.05, '#fff');
+  } else if(id==='packmule'){                          // a well-stuffed satchel
+    ctx.fillStyle='#8a5a34'; ctx.beginPath(); ctx.roundRect(cx-s*0.42, cy-s*0.12, s*0.84, s*0.54, s*0.1); ctx.fill();
+    ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(cx-s*0.42, cy-s*0.26, s*0.84, s*0.26, s*0.1); ctx.fill();
+    circle(cx, cy+s*0.04, s*0.08, '#e7c877');
+    ctx.strokeStyle='#6e4526'; ctx.lineWidth=Math.max(2,s*0.08);
+    ctx.beginPath(); ctx.arc(cx, cy-s*0.28, s*0.2, Math.PI, 0); ctx.stroke();
+  } else if(id==='haggler'){                           // a stack of gleaming GULD
+    circle(cx-s*0.14, cy+s*0.1, s*0.3, '#c9a23a'); circle(cx-s*0.14, cy+s*0.1, s*0.19, '#e7c877');
+    circle(cx+s*0.2, cy-s*0.14, s*0.3, '#c9a23a'); circle(cx+s*0.2, cy-s*0.14, s*0.19, '#ffd44d');
+    beam(cx+s*0.1, cy-s*0.24, cx+s*0.28, cy-s*0.1, s*0.05, '#fff8');
+  } else if(id==='fleetfoot'){                         // a boot at a run
+    rect(cx-s*0.16, cy-s*0.44, s*0.3, s*0.6, '#6e4526');                   // shaft
+    ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(cx-s*0.16, cy+s*0.04, s*0.62, s*0.28, s*0.08); ctx.fill();
+    rect(cx-s*0.16, cy+s*0.28, s*0.62, s*0.1, '#4a2f18');                  // sole
+    beam(cx-s*0.56, cy-s*0.2, cx-s*0.3, cy-s*0.2, s*0.055, '#a08a6a');    // speed lines
+    beam(cx-s*0.62, cy, cx-s*0.34, cy, s*0.055, '#a08a6a');
+  }
+}
+function drawMiniCard(id, c, x, y, w, h){              // a tiny trading card: tier frame, cream face, art, size badge
+  const T=CARD_TIERS[c.tier];
+  ctx.save();
+  if(!c.trained || c.trainT>0) ctx.globalAlpha=0.82;
+  ctx.shadowColor='rgba(0,0,0,.35)'; ctx.shadowBlur=3; ctx.shadowOffsetY=2;
+  ctx.fillStyle=T.col; ctx.beginPath(); ctx.roundRect(x, y, w, h, w*0.14); ctx.fill();          // tier-coloured frame
+  ctx.shadowColor='transparent';
+  ctx.fillStyle='#efe3c4'; ctx.beginPath(); ctx.roundRect(x+w*0.09, y+h*0.06, w*0.82, h*0.72, w*0.1); ctx.fill();   // cream face
+  drawCardArt(id, x+w/2, y+h*0.4, Math.min(w,h*0.7)*0.62);
+  ctx.fillStyle='#1d1207'; ctx.font='bold '+Math.round(h*0.15)+'px system-ui, sans-serif';      // its cost in grid squares
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(T.sq, x+w/2, y+h*0.89);
+  ctx.restore();
+}
 let _cardL=null;
 function drawCardUI(){                                 // THE MIND: the 5×5 brain grid + every card you own
   if(!cardUI.open){ _cardL=null; return; }
   const owned=Object.keys(player.cards||{});
   owned.sort((a,b)=> (player.cards[b].trained?1:0)-(player.cards[a].trained?1:0) || player.cards[b].tier-player.cards[a].tier);
   const pw=Math.min(canvas.width*0.94, Math.max(560, 470*DPR));
-  const headH=Math.max(44,42*DPR), gridH=Math.max(96,88*DPR), rowH=Math.max(44,40*DPR), footH=Math.max(30,26*DPR);
+  const headH=Math.max(44,42*DPR), gridH=Math.max(96,88*DPR), footH=Math.max(24,20*DPR);
+  const roomH=canvas.height*0.94-headH-gridH-footH;                              // rows share what's left
+  const rowH=Math.max(40, Math.min(Math.max(56,50*DPR), roomH/Math.max(1,owned.length)));
   const ph=Math.min(canvas.height*0.94, headH+gridH+Math.max(1,owned.length)*rowH+footH);
   const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2, pad=pw*0.045;
   ctx.save();
@@ -5058,18 +5131,16 @@ function drawCardUI(){                                 // THE MIND: the 5×5 bra
     ctx.fillText('No cards yet — they drop from goblins, bosses, and the Guild.', px+pad, y+rowH*0.6); }
   for(const id of owned){
     const c=player.cards[id], T=CARD_TIERS[c.tier], def=CARDS[id];
-    const chip=Math.max(26,24*DPR);
-    ctx.save(); if(!c.trained||c.trainT>0) ctx.globalAlpha=0.9;
-    rect(px+pad, y+rowH*0.5-chip*0.4, chip, chip*0.8, T.col);                     // tier chip
-    ctx.fillStyle='#1d1207'; ctx.font='bold '+Math.round(chip*0.42)+'px system-ui, sans-serif';
-    ctx.textAlign='center'; ctx.fillText(T.sq, px+pad+chip/2, y+rowH*0.5+1);      // its size in squares
-    ctx.restore();
-    ctx.textAlign='left'; ctx.fillStyle = c.trained&&c.trainT<=0 ? '#ffdf9e' : '#d8c6a6';
+    const ch=rowH*0.92, cw=ch*0.74;
+    drawMiniCard(id, c, px+pad, y+rowH*0.5-ch/2, cw, ch);                         // the little card itself
+    const tx=px+pad+cw+Math.max(10,9*DPR);
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle = c.trained&&c.trainT<=0 ? '#ffdf9e' : '#d8c6a6';
     ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
-    ctx.fillText(def.name+' · '+T.name, px+pad+chip*1.35, y+rowH*0.34);
+    ctx.fillText(def.name+' · '+T.name, tx, y+rowH*0.34);
     ctx.fillStyle='#b3a084'; ctx.font=Math.round(Math.max(11,10.5*DPR))+'px system-ui, sans-serif';
     const status = !c.trained ? 'in Memory' : c.trainT>0 ? 'training… '+Math.ceil(c.trainT/60)+' min' : 'trained';
-    ctx.fillText(def.txt(def.base*T.eff)+' — '+status, px+pad+chip*1.35, y+rowH*0.72);
+    ctx.fillText(def.txt(def.base*T.eff)+' — '+status, tx, y+rowH*0.72);
     const bw=Math.max(72,64*DPR), bh=Math.max(26,24*DPR);
     const btn={ x:px+pw-pad-bw, y:y+rowH*0.5-bh/2, w:bw, h:bh };
     const canTrain = !c.trained && (gridUsed()+T.sq<=gridSquares());
@@ -6255,7 +6326,15 @@ function netApplySnap(m){                              // world portion of a sna
     if(bAr && !armorShop.placed) placeArmorShopAt(bAr[0],bAr[1]); }
   if(m.bush){ world.bushes.length=0; for(const b of m.bush) world.bushes.push(b.length>2?{x:b[0],y:b[1],grow:b[2]}:{x:b[0],y:b[1]}); }
   if(m.crops){ world.crops.clear();
-    for(const [k,st] of m.crops) world.crops.set(k, {stage: st===0?'till':st===1?'seed':'wheat', t:0}); }
+    const hold=net._reapHold=net._reapHold||new Map();
+    for(const [k,st] of m.crops){
+      let stage = st===0?'till':st===1?'seed':'wheat';
+      if(hold.has(k)){
+        if(stage==='wheat'){ const n2=hold.get(k)+1;               // a snap from before our reap — the wheat stays reaped
+          if(n2<=3){ hold.set(k, n2); stage='till'; } else hold.delete(k); }   // (…unless the host insists several snaps running)
+        else hold.delete(k);                                       // the host caught up — back to normal
+      }
+      world.crops.set(k, {stage, t:0}); } }
   if(m.cv && !cave.unlocked) setCaveUnlocked();
   if(m.rk && mapMode==='dungeon' && world.rocks){ m.rk.forEach((gflag,i)=>{ const r=world.rocks[i];
     if(r && gflag && !r.gone){ r.gone=true; if(world.rockBlock) world.rockBlock.delete(gi(r.x,r.y)); } }); }
