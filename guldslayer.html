@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · q';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · r';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2288,11 +2288,13 @@ function updateChop(dt){
     maybeWoodGoblin((tree.x+1.5)*CELL, (tree.y+2.2)*CELL);                 // sometimes something was LIVING in there
     player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
 }
-function fellTree(tree, fromWX){                     // topple a tree away from `fromWX`
+function fellTree(tree, fromWX, fromNet){            // topple a tree away from `fromWX` — EVERY player sees it fall
   const dir = fromWX < (tree.x+1.5)*CELL ? 1 : -1;
   fallingTrees.push({ x:tree.x, y:tree.y, ang:0, dir, t:0 });
   const i=world.trees.indexOf(tree); if(i>=0) world.trees.splice(i,1);
   for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) world.terrain[gi(tree.x+dx,tree.y+dy)]=0;
+  if(!fromNet && typeof net!=='undefined' && net.mode!=='off' && net.connected)
+    netSend({t:'tfell', map:'forest', x:tree.x, y:tree.y, fx:Math.round(fromWX)});   // tell the others which tree dropped
 }
 function startFell(tree){ fellTree(tree, player.px); }   // player chops → topple away from the player
 /* --- Wood Goblins: 1 felled tree in 5 shakes one loose. A scrawny nuisance — 1 damage, 6 HP,
@@ -5721,7 +5723,7 @@ window.addEventListener('resize', resize);
 /* --- default view: centre on the player at 250% zoom --- */
 function setDefaultView(){
   recomputeZoomLimits();
-  cam.scale = Math.min(maxScale, fitScale*22.5);   // default mid-band — same view as before the world grew
+  cam.scale = minScale;                            // begin FULLY zoomed out — the whole neighbourhood in view
   camFollow=true;
   const p=projOf(player.px, player.py);
   cam.ox = p.x - (canvas.width/2)/cam.scale;
@@ -6212,6 +6214,7 @@ function buildSnap(){
     sn.bush=bush; sn.crops=crops;
     sn.rk=(mapMode==='dungeon'&&world.rocks)?world.rocks.map(r=>r.gone?1:0):null;
     sn.pk=(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null;
+    sn.tf=(world.stumps||[]).map(s=>[s.x, s.y, Math.round(s.regrow)]);   // felled trees, so late joiners match the canopy
   }
   return sn;
 }
@@ -6239,6 +6242,12 @@ function netApplySnap(m){                              // world portion of a sna
         if(L.snapMiss<3) world.sites.push(L); } }                            // …keep showing ours a few beats, then accept the refusal
     if(siteUI.open && !siteById(siteUI.id)) siteUI.open=false; }
   if(m.brg){ for(const b of m.brg){ if(!(world.builtBridges||[]).some(x2=>x2[0]===b[0]&&x2[1]===b[1])) placeBridgeTileAt(b[0], b[1], b[2]); } }
+  if(m.tf){ for(const s of m.tf){                                        // reconcile the canopy with the host's stumps
+    const t=(world.trees||[]).find(t2=>t2.x===s[0]&&t2.y===s[1]);
+    if(t){ world.trees.splice(world.trees.indexOf(t),1);                 // old news — no falling animation, just the stump
+      for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) world.terrain[gi(s[0]+dx,s[1]+dy)]=0;
+      world.stumps.push({x:s[0], y:s[1], regrow:s[2]}); }
+    else { const st=(world.stumps||[]).find(x2=>x2.x===s[0]&&x2.y===s[1]); if(st) st.regrow=s[2]; } } }   // keep regrow clocks in step
   if(m.bld){ const [bS,bSt,bBu,bAr]=m.bld;
     if(bS && !shop.placed) placeShopAt(bS[0],bS[1]);
     if(bSt && !stall.placed) placeStallAt(bSt[0],bSt[1]);
@@ -6255,7 +6264,7 @@ function netApplySnap(m){                              // world portion of a sna
 function netClearWorldForGuest(){ goblins.length=0; allDeer.length=0; pendingDeer.length=0; pendingGoblins.length=0; turtles.length=0; }
 function netOnData(m, fromClient){
   if(!m||!m.t) return;
-  const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1};
+  const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
   const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
@@ -6289,6 +6298,8 @@ function netOnData(m, fromClient){
     if(f && f.kind==='deer' && f.cr.dead && !f.cr.gone && (f.cr.deadT||0)<DEER_FRESH_T) f.cr.deadT=DEER_FRESH_T; } }
   else if(m.t==='lootg'){ if(net.mode==='host'){ const f=findByNid(m.nid);                      // guest took an enemy's soul → mark the body spent here too
     if(f && f.kind==='goblin' && f.cr.dead && !f.cr.gone && !f.cr.looted){ f.cr.looted=true; f.cr.deadT=Math.max(f.cr.deadT||0,60); } } }
+  else if(m.t==='tfell'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);           // another player's tree comes down HERE too
+    if(t) fellTree(t, +m.fx||((t.x+1.5)*CELL), true); }
   else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
   else if(m.t==='siteNew'){ if(net.mode==='host') addSite(m.kind, m.tx|0, m.ty|0); }
   else if(m.t==='siteWood'){ if(net.mode==='host'){ const s=(world.sites||[]).find(x2=>x2.id===m.i); siteAddWood(s, Math.max(0, Math.min(50, m.n|0))); } }
