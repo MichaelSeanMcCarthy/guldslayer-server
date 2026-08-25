@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · n';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · o';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -94,6 +94,7 @@ function levelUpFanfare(){                                           // a level 
     player.guld=(player.guld||0)+500;
     addFloat('Release '+RELEASE.num+' cap reached!', player.px, player.py-CELL*2.1, '#e7c877');
     addFloat('+500 GULD — the Guild\'s bounty', player.px, player.py-CELL*1.7, '#ffd44d');
+    const ids=Object.keys(CARDS); grantCard(ids[(Math.random()*ids.length)|0]);   // …and the Guild teaches you a card
   }
 }
 
@@ -111,11 +112,11 @@ const HUNGER = {
   starveHpPerSec: 1         // …and an empty one drains a point of health every second
 };
 function updateHunger(dt){                        // runs every frame for the local hero (host and guest alike)
-  player.stamina = Math.max(0, player.stamina - dt*(100/(HUNGER.fullMinutes*60)));
+  player.stamina = Math.max(0, player.stamina - dt*(100/(HUNGER.fullMinutes*60))*(1-cardVal('ironbelly')));   // Iron Belly slows the clock
   if(player.stamina>0){                           // FED: regeneration only works while you are fed
     player.starveHp=0;
     if(player.hp<player.hpMax && !player.dead){
-      player.regenT=(player.regenT||0)+dt*regenMul();     // Regen arrows make the fed trickle tick faster
+      player.regenT=(player.regenT||0)+dt*regenMul()*(1+cardVal('mender'));   // Regen arrows + the Mender card quicken the trickle
       while(player.regenT>=HUNGER.regenSecs){ player.regenT-=HUNGER.regenSecs;
         player.hp=Math.min(player.hpMax, player.hp+HUNGER.regenHp); }
     } else player.regenT=0;
@@ -133,6 +134,74 @@ function updateHunger(dt){                        // runs every frame for the lo
     if(w>=1){ player._digestAcc-=w; player.hp=Math.min(player.hpMax, player.hp+w); }
     if(player.hp>=player.hpMax){ player.digestHp=0; player._digestAcc=0; }
   }
+}
+
+/* --- training cards: the identity layer (§4c) — the Mind's brain grid ---
+   Cards are found in the world and are PERMANENT (they survive death; only a new character starts empty).
+   The grid starts at 5 squares and grows +1 every 5 levels toward the full 5×5. Rarity buys both space
+   and force: a rarer copy takes FEWER squares and hits a little harder (sizes 5-4-3-2-1, gentle 1.0→1.7).
+   One of each card ever — a better copy replaces, a duplicate salvages. A newly trained card pays nothing
+   until it trains in. Starving switches every card off (§4d). */
+const CARD_TIERS=[
+  { name:'Common',    sq:5, eff:1.00, share:46, col:'#b8b8b8' },
+  { name:'Uncommon',  sq:4, eff:1.15, share:27, col:'#6fce6f' },
+  { name:'Rare',      sq:3, eff:1.30, share:16, col:'#5ea2ff' },
+  { name:'Epic',      sq:2, eff:1.50, share:8,  col:'#c07fe8' },
+  { name:'Legendary', sq:1, eff:1.70, share:3,  col:'#ffb84d' },
+];
+const CARDS={
+  lumberjack:{ name:'Lumberjack', dom:'gathering', base:0.25, txt:v=>'Chop trees '+Math.round(v*100)+'% faster' },
+  swordsman: { name:'Swordsman',  dom:'melee',     base:0.15, txt:v=>'Melee blows +'+Math.round(v*100)+'% damage' },
+  marksman:  { name:'Marksman',   dom:'ranged',    base:0.15, txt:v=>'Arrows +'+Math.round(v*100)+'% damage' },
+  thickhide: { name:'Thick Hide', dom:'defence',   base:0.12, txt:v=>'Take '+Math.round(v*100)+'% less damage' },
+  forager:   { name:'Forager',    dom:'farming',   base:0.34, txt:v=>'Harvests yield +'+Math.round(v*100)+'%' },
+  ironbelly: { name:'Iron Belly', dom:'survival',  base:0.25, txt:v=>'Hunger falls '+Math.round(v*100)+'% slower' },
+  mender:    { name:'Mender',     dom:'regen',     base:0.50, txt:v=>'Regenerate '+Math.round(v*100)+'% faster' },
+  packmule:  { name:'Packmule',   dom:'carrying',  base:0.20, txt:v=>'Carry '+Math.round(v*100)+'% more weight' },
+  haggler:   { name:'Haggler',    dom:'trade',     base:0.15, txt:v=>'GULD prices '+Math.round(v*100)+'% lower' },
+  fleetfoot: { name:'Fleet Foot', dom:'movement',  base:0.10, txt:v=>'Walk '+Math.round(v*100)+'% faster' },
+};
+const TRAIN_SECS=5*60;                       // training-in: a newly slotted card pays nothing for 5 minutes
+const cardUI={ open:false, pulse:0 };
+function gridSquares(){ return Math.min(25, 5+Math.floor((player.level||1)/5)); }   // 5 → 25 across the career
+function gridUsed(){ let u=0; for(const id in (player.cards||{})){ const c=player.cards[id]; if(c.trained) u+=CARD_TIERS[c.tier].sq; } return u; }
+function cardVal(id){                        // the live bonus of one card — 0 unless trained-in AND fed
+  const c=player.cards&&player.cards[id]; if(!c||!c.trained||c.trainT>0) return 0;
+  if(player.stamina<=0) return 0;            // STARVING: you lose the benefit of your cards
+  return CARDS[id].base*CARD_TIERS[c.tier].eff;
+}
+function cardTierRoll(){ const r=Math.random()*100; let acc=0;
+  for(let i=0;i<CARD_TIERS.length;i++){ acc+=CARD_TIERS[i].share; if(r<acc) return i; } return 0; }
+function grantCard(id, tier){                // a card is FOUND: new → Memory; better copy → upgrade; worse → salvage
+  player.cards=player.cards||{};
+  if(tier==null) tier=cardTierRoll();
+  const have=player.cards[id], nm=CARDS[id].name, tn=CARD_TIERS[tier].name;
+  if(!have){ player.cards[id]={tier, trained:false, trainT:0}; cardUI.pulse=8;
+    addFloat('Card found: '+nm+' ('+tn+')!', player.px, player.py-CELL*2.5, CARD_TIERS[tier].col); }
+  else if(tier>have.tier){ have.tier=tier; cardUI.pulse=8;          // one of each card — a better copy replaces
+    addFloat(nm+' improves to '+tn+'!', player.px, player.py-CELL*2.5, CARD_TIERS[tier].col); }
+  else { player.guld=(player.guld||0)+25;                           // dead-weight duplicate → salvage
+    addFloat('Duplicate '+nm+' salvaged: +25 GULD', player.px, player.py-CELL*2.5, '#cfd6de'); }
+}
+function rollKillCard(kind, cr){             // what a killing blow can teach you
+  const key = kind==='deer' ? 'deer' : (cr.kind||'claw');
+  const ids=Object.keys(CARDS);
+  if(key==='king') grantCard(ids[(Math.random()*ids.length)|0], Math.max(cardTierRoll(), 2));   // the King teaches at least a Rare
+  else if(key==='boss') grantCard(ids[(Math.random()*ids.length)|0]);
+  else if(Math.random()<0.03) grantCard(ids[(Math.random()*ids.length)|0]);                     // 3% from ordinary kills
+}
+function trainCard(id){                      // Memory → Trained, if the grid has room; training-in starts
+  const c=player.cards&&player.cards[id]; if(!c||c.trained) return 'already';
+  const need=CARD_TIERS[c.tier].sq, free=gridSquares()-gridUsed();
+  if(need>free) return 'No room in the grid — needs '+need+', '+free+' free';
+  c.trained=true; c.trainT=TRAIN_SECS; return null;
+}
+function forgetCard(id){ const c=player.cards&&player.cards[id]; if(c&&c.trained){ c.trained=false; c.trainT=0; } }  // back to Memory — forgetting is free
+function updateCards(dt){
+  for(const id in (player.cards||{})){ const c=player.cards[id];
+    if(c.trained&&c.trainT>0){ c.trainT-=dt;
+      if(c.trainT<=0){ c.trainT=0; addFloat(CARDS[id].name+' trained in!', player.px, player.py-CELL*2.2, '#8fd07a'); } } }
+  if(cardUI.pulse>0) cardUI.pulse-=dt;
 }
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
@@ -946,7 +1015,7 @@ const player = {
   magic: {club:0, bow:0, longbow:0, sword:0, gaxe:0, helmet:0, armor:0, leggings:0, chainmail:0}, witchEye: 0,   // per-item altar boosts (0 / 0.2 / 1.0) + Eye of the Witch drops
   tool: null, chopTree: null, chopping: false, chopT: 0, chipT: 0, wood: 10, club: 0, bow: 1, arrows: 10, hoe: 0, seeds: 0, wheat: 0, meat: 0, jerky: 0, meal: 0, skins: 0, helmet: 0, armor: 0, leggings: 0, goShop: false, goStall: false, goArmor: false, attack: null, stamina: 100, propTarget: null, punchT: 0,
   dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0, pack: 'small',
-  level: 1, xp: 0,                                   // the identity layer — level/XP persist through death
+  level: 1, xp: 0, cards: {},                        // the identity layer — level/XP/cards persist through death
   digestHp: 0, regenT: 0, starveHp: 0, _digestAcc: 0 // hunger system state (§4d)
 };
 // playable races: body shape (sc=overall size, tw=width/thickness, hh=height proportion) + head look.
@@ -997,7 +1066,7 @@ const RACE_STATS = {
 const ITEM_LBS = { arrows:0.1, wheat:0.5, seeds:0.5, meat:1, jerky:1, meal:1, wood:2, skins:2,
   bow:2, longbow:3, helmet:3, hoe:3, iron:4, club:4, leggings:4, pickaxe:5, sword:6, silver:6,
   armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5 };
-function carryCap(){ const rs=RACE_STATS[player.race]||RACE_STATS.human; return rs.carry||100; }
+function carryCap(){ const rs=RACE_STATS[player.race]||RACE_STATS.human; return Math.round((rs.carry||100)*(1+cardVal('packmule'))); }   // Packmule broadens the back
 function packSlots(){ return player.pack==='large'?16 : player.pack==='medium'?12 : 8; }
 function packName(){ return player.pack==='large'?'Large Pack' : player.pack==='medium'?'Medium Pack' : 'Small Pack'; }
 function packWeight(){ let w=0; for(const k in ITEM_LBS) w+=(player[k]||0)*ITEM_LBS[k]; return Math.round(w*10)/10; }
@@ -1633,7 +1702,7 @@ function updatePlayer(dt){
   const node = player.path[0];
   const dx = node.x-player.px, dy = node.y-player.py, d = Math.hypot(dx,dy);
   if(d>0.001){ player.angle = Math.atan2(dy,dx); player.face = face8(dx,dy); }
-  const step = MOVE_SPEED*(player.speedMul||1)*dt;
+  const step = MOVE_SPEED*(player.speedMul||1)*(1+cardVal('fleetfoot'))*dt;   // Fleet Foot lengthens the stride
   if(d<=step){ player.px=node.x; player.py=node.y; player.path.shift(); if(!player.path.length) player.targetCell=null; }
   else { player.px += dx/d*step; player.py += dy/d*step; }
 }
@@ -1786,9 +1855,10 @@ function craftItem(it){                             // buy an item, paid in its 
     return;
   }
   const cur=it.cur||'wood';
-  if(player[cur]>=it.cost){ player[cur]-=it.cost; it.give();
+  const cost = cur==='guld' ? Math.max(1, Math.round(it.cost*(1-cardVal('haggler')))) : it.cost;   // the Haggler talks coin prices down
+  if(player[cur]>=cost){ player[cur]-=cost; it.give();
     shop.msg=it.name.replace(' (+10)','').replace(' (+5)','')+' '+(it.verb||'crafted')+'!'; shop.msgT=2.5; }
-  else { shop.msg='Not enough '+cur+' ('+player[cur]+'/'+it.cost+')'; shop.msgT=2.5; }
+  else { shop.msg='Not enough '+cur+' ('+player[cur]+'/'+cost+')'; shop.msgT=2.5; }
 }
 /* --- altar rites: souls (and the Eye of the Witch) buy magic, blessed onto ONE chosen piece of gear --- */
 const altarUI = { open:false };
@@ -2024,7 +2094,8 @@ function spookNearbyDeer(dead){                     // a fresh kill panics the h
 }
 const WEAPON_DMG = { club:[3,6], bow:[4,6], longbow:[6,9], sword:[7,11], gaxe:[24,36] };   // sword ≈ a blessed longbow; the Gleaming Axe = 2x an enchanted longbow
 function rollDmg(w){ const r=WEAPON_DMG[w]||[1,1]; const base=r[0]+Math.floor(Math.random()*(r[1]-r[0]+1));
-  return Math.max(1, Math.round(base*(1+((player.magic&&player.magic[w])||0))*dmgMul())); }   // blessing × the race's Dmg arrows
+  const spec=cardVal((w==='bow'||w==='longbow')?'marksman':'swordsman');       // the weapon-specialty card
+  return Math.max(1, Math.round(base*(1+((player.magic&&player.magic[w])||0))*dmgMul()*(1+spec))); }   // blessing × race Dmg arrows × card
 function alertGoblins(src){                          // an attacked goblin rallies its kin: all within 10 tiles turn on the player
   const sp=creaturePos('goblin', src);
   for(const g of goblins){ if(g.dead||g.gone) continue;
@@ -2040,7 +2111,7 @@ function damageCreature(kind, cr, amount, fromRemote){   // deal `amount` damage
 }
 function coopPlayerDamage(kind, cr, amount){         // a player's blow: host applies it; a guest relays it to the host
   const willDie = !creatureDead(kind,cr) && ((cr.hp==null?1:cr.hp)-amount)<=0;
-  if(willDie) grantKillXP(kind, cr);                 // XP credits the player who lands the killing blow
+  if(willDie){ grantKillXP(kind, cr); rollKillCard(kind, cr); }   // XP + a chance at a training card credit the killing blow
   if(typeof net!=='undefined' && net.mode==='guest'){ netSend({t:'dmg', map:mapMode, nid:cr.nid, kind, amount}); return; }
   damageCreature(kind, cr, amount);
 }
@@ -2199,7 +2270,7 @@ function updateChop(dt){
   const pcx=cellOf(player.px), pcy=cellOf(player.py);
   if(!(pcx>=tree.x-2&&pcx<=tree.x+TILE+1 && pcy>=tree.y-2&&pcy<=tree.y+TILE+1)){ player.chopTree=null; return; }
   player.face = face4((tree.x+1.5)*CELL-player.px, (tree.y+1.5)*CELL-player.py);   // face the tree
-  player.chopping=true; player.chopT+=dt;
+  player.chopping=true; player.chopT+=dt*(1+cardVal('lumberjack'));   // the Lumberjack card quickens the axe
   // a swing lands about once a second — burst of chips on each hit
   player.chipT-=dt; if(player.chipT<=0){ player.chipT=1.0; for(let i=0;i<7;i++) spawnChip((tree.x+1.5)*CELL, (tree.y+2.4)*CELL); }
   if(player.chopT>=CHOP_TIME){
@@ -2565,7 +2636,8 @@ function playerHit(amount, blood, ignoreArmor){    // player takes damage; ghost
   if(player.hp<=0) return;
   if(!ignoreArmor && shopUI.open) shopUI.open=false;   // an attack interrupts shopping — close the store dialogue
   if(!ignoreArmor && altarUI.open) altarUI.open=false; // …and communing at the altar
-  if(!ignoreArmor){ amount=Math.max(0, amount-armorBlock());
+  if(!ignoreArmor){ amount=Math.ceil(amount*(1-cardVal('thickhide')));          // Thick Hide shrugs part of the blow…
+    amount=Math.max(0, amount-armorBlock());                                    // …then armor takes its share
     if(amount<=0){ player.hurtT=Math.max(player.hurtT,0.28);
       addFloat('Blocked!', player.px, player.py-CELL*1.9, '#cfd6de'); return; } }  // absorbed by armor — show it
 
@@ -4052,6 +4124,7 @@ function draw(){
     drawToolBar();          // tool buttons, bottom-centre
     drawInventory();        // wood count, left (only when you have wood)
     drawInvButton();        // satchel, bottom-right → opens the inventory screen
+    drawBrainButton();      // the Mind, above the satchel → opens the brain grid
     drawBuildGhost();       // ground-select: the building's placement ghost
   }
   drawHearts();             // player HP, top-left
@@ -4067,6 +4140,7 @@ function draw(){
     drawInvUI();            // inventory screen, when open
     drawBuildUI();          // the building catalog
     drawSiteUI();           // a build site's progress panel
+    drawCardUI();           // the Mind — the brain grid of training cards
   }
   // drawZoomHUD();         // zoom read-out retired — the 5×–10× band is settled (re-enable to tune again)
 }
@@ -4472,7 +4546,7 @@ function updateHarvest(dt){
     let n=0;
     for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const cc=world.crops.get(gi(bx+dx,by+dy));
       if(cc && cc.stage==='wheat'){ cc.stage='till'; cc.t=0; n++; } }
-    const gain=Math.ceil(n/3);                                                      // a full plot yields 3 wheat — no stamina;
+    const gain=Math.ceil((n/3)*(1+cardVal('forager')));                             // a full plot yields 3 wheat (+Forager card) — no stamina;
     player.wheat=(player.wheat||0)+gain;                                            // wheat only feeds you cooked into a meal
     addFloat('+'+gain+' wheat', player.px, player.py-CELL*1.9, PAL.wheatStalk);
     if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'harv', key});   // tell the host this plot was reaped
@@ -4884,6 +4958,115 @@ function drawInvButton(){                              // a leather satchel floa
   ctx.strokeStyle='#6e4526'; ctx.lineWidth=Math.max(2.5,DPR*2);
   ctx.beginPath(); ctx.arc(cx, cy-s*0.19, s*0.19, Math.PI, 0); ctx.stroke();                         // strap
   ctx.restore();
+}
+function brainButtonBox(){ const B=invButtonBox(), s=B.w*0.78; return { x:B.x+(B.w-s)/2, y:B.y-s*1.12, w:s, h:s }; }
+function drawBrainButton(){                            // the Mind — a little pink brain above the satchel
+  if(invUI.open || shopUI.open || cardUI.open) return;
+  const B=brainButtonBox(), cx=B.x+B.w/2, cy=B.y+B.h/2, s=B.w;
+  ctx.save();
+  if(cardUI.pulse>0){ const p=0.5+0.5*Math.sin(animT*7);          // a fresh card calls for attention
+    ctx.strokeStyle='rgba(255,212,77,'+(0.35+0.5*p)+')'; ctx.lineWidth=Math.max(3,DPR*2.5);
+    ctx.beginPath(); ctx.arc(cx, cy, s*0.52, 0, Math.PI*2); ctx.stroke(); }
+  ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=s*0.1; ctx.shadowOffsetY=s*0.05;
+  circle(cx-s*0.14, cy-s*0.02, s*0.26, '#d98ba0');               // two lobes
+  circle(cx+s*0.14, cy-s*0.02, s*0.26, '#d98ba0');
+  circle(cx, cy-s*0.12, s*0.24, '#e3a0b3');
+  ctx.shadowColor='transparent';
+  ctx.strokeStyle='#b76a83'; ctx.lineWidth=Math.max(2,DPR*1.6);  // folds
+  ctx.beginPath(); ctx.moveTo(cx, cy-s*0.32); ctx.lineTo(cx, cy+s*0.16); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx-s*0.14, cy-s*0.04, s*0.13, 0.4, 2.6); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx+s*0.14, cy-s*0.04, s*0.13, 0.6, 2.8); ctx.stroke();
+  rect(cx-s*0.10, cy+s*0.18, s*0.20, s*0.10, '#b76a83');         // brain-stem base
+  const owned=Object.keys(player.cards||{}).length;              // owned-card count badge
+  if(owned>0){ circle(cx+s*0.32, cy-s*0.3, s*0.15, '#ffd44d');
+    ctx.fillStyle='#3a2412'; ctx.font='bold '+Math.round(s*0.2)+'px system-ui, sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(owned, cx+s*0.32, cy-s*0.29); }
+  ctx.restore();
+}
+let _cardL=null;
+function drawCardUI(){                                 // THE MIND: the 5×5 brain grid + every card you own
+  if(!cardUI.open){ _cardL=null; return; }
+  const owned=Object.keys(player.cards||{});
+  owned.sort((a,b)=> (player.cards[b].trained?1:0)-(player.cards[a].trained?1:0) || player.cards[b].tier-player.cards[a].tier);
+  const pw=Math.min(canvas.width*0.94, Math.max(560, 470*DPR));
+  const headH=Math.max(44,42*DPR), gridH=Math.max(96,88*DPR), rowH=Math.max(44,40*DPR), footH=Math.max(30,26*DPR);
+  const ph=Math.min(canvas.height*0.94, headH+gridH+Math.max(1,owned.length)*rowH+footH);
+  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2, pad=pw*0.045;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#2e1d10'; ctx.strokeStyle='#7a4a1e'; ctx.lineWidth=Math.max(3,DPR*2);
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,18); ctx.fill(); ctx.stroke();
+  const cs=Math.max(22,24*DPR), closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.55, w:cs, h:cs };
+  ctx.strokeStyle='#cfae7a'; ctx.lineWidth=Math.max(2.5,DPR*2);
+  ctx.beginPath(); ctx.moveTo(closeBtn.x+4,closeBtn.y+4); ctx.lineTo(closeBtn.x+cs-4,closeBtn.y+cs-4);
+  ctx.moveTo(closeBtn.x+cs-4,closeBtn.y+4); ctx.lineTo(closeBtn.x+4,closeBtn.y+cs-4); ctx.stroke();
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(17,16*DPR))+'px system-ui, sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText('The Mind', px+pad, py+headH*0.55);
+  ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(12,11*DPR))+'px system-ui, sans-serif';
+  ctx.fillText(gridUsed()+' / '+gridSquares()+' squares trained · the grid grows +1 every 5 levels', px+pad+Math.max(96,90*DPR), py+headH*0.58);
+  // --- the 5×5 grid, filled square by square with each trained card's colour ---
+  const gy=py+headH, cell=Math.min((gridH-14)/1.0, Math.max(14,13*DPR)), gap=Math.max(2,2*DPR);
+  const gx=px+pad, cols=5;
+  const fills=[]; for(const id of owned){ const c=player.cards[id]; if(!c.trained) continue;
+    for(let i=0;i<CARD_TIERS[c.tier].sq;i++) fills.push({col:CARD_TIERS[c.tier].col, dim:c.trainT>0}); }
+  for(let i=0;i<25;i++){ const r2=Math.floor(i/cols), col2=i%cols;
+    const x=gx+col2*(cell+gap), y=gy+r2*(cell+gap)*0.72;         // squash rows a little to fit gridH
+    const h2=cell*0.72;
+    if(i>=gridSquares()){ rect(x,y,cell,h2,'#241609');           // locked — the mind has yet to grow
+      ctx.strokeStyle='#3a2a18'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
+    else if(i<fills.length){ ctx.save(); if(fills[i].dim) ctx.globalAlpha=0.45;
+      rect(x,y,cell,h2,fills[i].col); ctx.restore();
+      ctx.strokeStyle='#1d1207'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
+    else { rect(x,y,cell,h2,'#4a3a26');                          // open square — room to learn
+      ctx.strokeStyle='#5c4930'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
+  }
+  // legend beside the grid
+  ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(11,10*DPR))+'px system-ui, sans-serif';
+  ctx.fillText('Rarer cards take FEWER squares and work a little harder.', gx+5*(cell+gap)+pad*0.6, gy+cell*0.5);
+  ctx.fillText('Training a card takes '+(TRAIN_SECS/60)+' min before it pays. Forgetting is free.', gx+5*(cell+gap)+pad*0.6, gy+cell*1.35);
+  ctx.fillText('Starving switches every card off.', gx+5*(cell+gap)+pad*0.6, gy+cell*2.2);
+  // --- the card rows ---
+  const rows=[]; let y=py+headH+gridH;
+  if(!owned.length){ ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(13,12*DPR))+'px system-ui, sans-serif';
+    ctx.fillText('No cards yet — they drop from goblins, bosses, and the Guild.', px+pad, y+rowH*0.6); }
+  for(const id of owned){
+    const c=player.cards[id], T=CARD_TIERS[c.tier], def=CARDS[id];
+    const chip=Math.max(26,24*DPR);
+    ctx.save(); if(!c.trained||c.trainT>0) ctx.globalAlpha=0.9;
+    rect(px+pad, y+rowH*0.5-chip*0.4, chip, chip*0.8, T.col);                     // tier chip
+    ctx.fillStyle='#1d1207'; ctx.font='bold '+Math.round(chip*0.42)+'px system-ui, sans-serif';
+    ctx.textAlign='center'; ctx.fillText(T.sq, px+pad+chip/2, y+rowH*0.5+1);      // its size in squares
+    ctx.restore();
+    ctx.textAlign='left'; ctx.fillStyle = c.trained&&c.trainT<=0 ? '#ffdf9e' : '#d8c6a6';
+    ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
+    ctx.fillText(def.name+' · '+T.name, px+pad+chip*1.35, y+rowH*0.34);
+    ctx.fillStyle='#b3a084'; ctx.font=Math.round(Math.max(11,10.5*DPR))+'px system-ui, sans-serif';
+    const status = !c.trained ? 'in Memory' : c.trainT>0 ? 'training… '+Math.ceil(c.trainT/60)+' min' : 'trained';
+    ctx.fillText(def.txt(def.base*T.eff)+' — '+status, px+pad+chip*1.35, y+rowH*0.72);
+    const bw=Math.max(72,64*DPR), bh=Math.max(26,24*DPR);
+    const btn={ x:px+pw-pad-bw, y:y+rowH*0.5-bh/2, w:bw, h:bh };
+    const canTrain = !c.trained && (gridUsed()+T.sq<=gridSquares());
+    ctx.fillStyle = c.trained ? '#8a4a3a' : canTrain ? '#3f7d3f' : '#4a4038';
+    ctx.beginPath(); ctx.roundRect(btn.x,btn.y,btn.w,btn.h,7); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(bh*0.5)+'px system-ui, sans-serif';
+    ctx.textAlign='center'; ctx.fillText(c.trained?'Forget':canTrain?'Train':'No room', btn.x+bw/2, btn.y+bh*0.55);
+    ctx.textAlign='left';
+    rows.push({id, btn});
+    y+=rowH;
+  }
+  ctx.restore();
+  _cardL={ panel:{x:px,y:py,w:pw,h:ph}, closeBtn, rows };
+}
+function cardUIClick(cx,cy){
+  const L=_cardL; if(!L){ cardUI.open=false; return; }
+  const inside=(b)=> cx>=b.x&&cx<=b.x+b.w&&cy>=b.y&&cy<=b.y+b.h;
+  if(inside(L.closeBtn) || !inside(L.panel)){ cardUI.open=false; return; }
+  for(const r2 of L.rows){ if(inside(r2.btn)){
+    const c=player.cards[r2.id];
+    if(c.trained) forgetCard(r2.id);
+    else { const err=trainCard(r2.id); if(err&&err!=='already') addFloat(err, player.px, player.py-CELL*2.0, '#e08a8a'); }
+    return; } }
 }
 function drawResourceIcon(key, x, y, s){               // small icons for the resources tab
   if(key==='wood'){ rect(x-s*0.4,y-s*0.05,s*0.8,s*0.26,PAL.trunk); rect(x-s*0.28,y-s*0.3,s*0.8,s*0.26,PAL.pWood); }
@@ -5342,6 +5525,7 @@ function loop(ts){
   }
   if(net.mode==='guest'){                        // co-op guest: the world is streamed from the host; only run the local hero
     updateHunger(dt);                            // the hunger clock, regen and digestion (§4d)
+    updateCards(dt);                             // training-in countdowns
     if(shop.msgT>0) shop.msgT-=dt;
     if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }
     updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt);
@@ -5359,6 +5543,7 @@ function loop(ts){
     netUpdate(dt); draw(); requestAnimationFrame(loop); return;
   }
   updateHunger(dt);                              // the hunger clock, regen and digestion (§4d)
+  updateCards(dt);                               // training-in countdowns
   if(shop.msgT>0) shop.msgT-=dt;                                                                 // fade the shop message
   if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }  // deselect a tool that's no longer owned
   updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt); updateBushes(dt);
@@ -5450,11 +5635,14 @@ function endPointer(ev){
       else if(shopUI.open){ shopUIClick(c.x, c.y); }      // modal captures the tap
       else if(altarUI.open){ altarClick(c.x, c.y); } // altar rites capture the tap
       else if(invUI.open){ invUIClick(c.x, c.y); }   // inventory screen captures the tap
+      else if(cardUI.open){ cardUIClick(c.x, c.y); } // the Mind captures the tap
       else {
         let hitTool=false;
         if(mmButtonTap(c.x, c.y)) hitTool=true;                                                      // minimap +/- buttons
         const IB=invButtonBox();
         if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
+        const BB=brainButtonBox();
+        if(!hitTool && c.x>=BB.x&&c.x<=BB.x+BB.w&&c.y>=BB.y&&c.y<=BB.y+BB.h){ cardUI.open=true; cardUI.pulse=0; hitTool=true; }   // the Mind → brain grid
         for(const b of toolButtons()){ if(hitTool) break; if(c.x>=b.x&&c.x<=b.x+b.w&&c.y>=b.y&&c.y<=b.y+b.h){
           const wasBuilding=!!buildMode; buildMode=null; _buildConfirmBox=null;                       // picking ANY action icon leaves ground-select
           if(b.key==='build'){ if(!wasBuilding) buildUI.open=!buildUI.open; siteUI.open=false; hitTool=true; break; }
@@ -5584,13 +5772,14 @@ function placePlayerStart(){                        // begin ON the dirt road, w
     if(found) break; } }
   player.px=(cx+0.5)*CELL; player.py=(cy+0.5)*CELL; player.path=[]; player.targetCell=null; player.face='S';
 }
-function startAsRace(k){ player.race=k; player.level=1; player.xp=0; closeRaceModal(); resetPlayerStats(); scene='game'; placePlayerStart(); setDefaultView(); }   // Yes -> a NEW character begins at level 1
+function startAsRace(k){ player.race=k; player.level=1; player.xp=0; player.cards={}; closeRaceModal(); resetPlayerStats(); scene='game'; placePlayerStart(); setDefaultView(); }   // Yes -> a NEW character: level 1, empty Mind
 function resetPlayerStats(){                         // fresh start: full HP, starting kit, cleared state
   const rs=RACE_STATS[player.race]||RACE_STATS.human;   // race sets max hearts + move speed
   player.hpMax=rs.hpMax; player.speedMul=rs.speed;
   player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false; player.swingCD=0; player.pack='small'; player._packMsgT=0;
   player.digestHp=0; player.regenT=0; player._digestAcc=0;   // hunger system state resets with the body
   if(player.level==null){ player.level=1; player.xp=0; }   // level/XP are identity — they survive a death; only a NEW character resets them (startAsRace)
+  if(player.cards==null) player.cards={};                  // cards are identity too — a death forgets nothing
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
