@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · i';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · j';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -700,24 +700,26 @@ function placeBridge(){
     // horizontal creek: a 2-column-wide bridge spanning ALL water rows (+2 land each end) so both banks connect
     let bx=Math.round((wx0+wx1)/2);
     for(let off=0; off<GRID; off++){ if(colHasWater(bx+off)){ bx=bx+off; break; } if(colHasWater(bx-off)){ bx=bx-off; break; } }
-    const cols=[bx, bx+1].filter(x=>inGrid(x,0));
+    const btx=Math.max(0,Math.min(GRID-TILE,Math.floor(bx/TILE)*TILE));       // the bridge fills one whole tile column
+    const cols=[btx, btx+1, btx+2];
     let miny=GRID, maxy=-1;
     for(const x of cols) for(let y=0;y<GRID;y++) if(isWater(x,y)){ miny=Math.min(miny,y); maxy=Math.max(maxy,y); }
     if(maxy<0) return;
-    const y0=miny-2, y1=maxy+2;
+    const y0=Math.max(0,Math.floor((miny-2)/TILE)*TILE), y1=Math.min(GRID-1,Math.floor((maxy+2)/TILE)*TILE+TILE-1);   // span snaps to tiles
     for(const x of cols) for(let y=y0; y<=y1; y++){ if(inGrid(x,y)){
-      world.bridge.push({x,y, vertical:true, edge:(x===bx?'w':'e'), post:(y===y0||y===y1)}); world.bridgeSet.add(gi(x,y)); } }
+      world.bridge.push({x,y, vertical:true, edge:(x===cols[0]?'w':x===cols[2]?'e':null), post:(y===y0||y===y1)}); world.bridgeSet.add(gi(x,y)); } }
   } else {
     // vertical creek: a 2-row-tall bridge spanning ALL water columns (+2 land each end)
     let by=Math.round((wy0+wy1)/2);
     for(let off=0; off<GRID; off++){ if(rowHasWater(by+off)){ by=by+off; break; } if(rowHasWater(by-off)){ by=by-off; break; } }
-    const rows=[by, by+1].filter(y=>inGrid(0,y));
+    const bty=Math.max(0,Math.min(GRID-TILE,Math.floor(by/TILE)*TILE));       // one whole tile row
+    const rows=[bty, bty+1, bty+2];
     let minx=GRID, maxx=-1;
     for(const y of rows) for(let x=0;x<GRID;x++) if(isWater(x,y)){ minx=Math.min(minx,x); maxx=Math.max(maxx,x); }
     if(maxx<0) return;
-    const x0=minx-2, x1=maxx+2;
+    const x0=Math.max(0,Math.floor((minx-2)/TILE)*TILE), x1=Math.min(GRID-1,Math.floor((maxx+2)/TILE)*TILE+TILE-1);
     for(const y of rows) for(let x=x0; x<=x1; x++){ if(inGrid(x,y)){
-      world.bridge.push({x,y, vertical:false, edge:(y===by?'n':'s'), post:(x===x0||x===x1)}); world.bridgeSet.add(gi(x,y)); } }
+      world.bridge.push({x,y, vertical:false, edge:(y===rows[0]?'n':y===rows[2]?'s':null), post:(x===x0||x===x1)}); world.bridgeSet.add(gi(x,y)); } }
   }
 }
 // carve out a clear 4x4 plot near the centre for the weapon shop, on a dirt lot with barrels & crates
@@ -732,8 +734,72 @@ function placeShopAt(sx, sy){
   // (the barrels that once cluttered the shop's lot are gone — a clean storefront)
 }
 
+/* --- tile-grade pathfinding: on the FOREST map every walker travels tile-centre to
+       tile-centre (the dungeon's hand-carved corridors keep the fine cell grid). --- */
+const TGRD = GRID/TILE;
+let _tpG=null,_tpPrev=null,_tpMark=null,_tpGen=0;
+function tileWalkable(tx,ty){
+  if(tx<0||ty<0||tx>=TGRD||ty>=TGRD) return false;
+  const x0=tx*TILE, y0=ty*TILE;
+  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(isBlocked(x0+dx,y0+dy)) return false;
+  return true;
+}
+function findPathTiles(scx,scy,tcx,tcy){
+  const N=TGRD*TGRD;
+  if(!_tpG){ _tpG=new Float32Array(N); _tpPrev=new Int32Array(N); _tpMark=new Int32Array(N); }
+  const stx=Math.max(0,Math.min(TGRD-1,Math.floor(scx/TILE))), sty=Math.max(0,Math.min(TGRD-1,Math.floor(scy/TILE)));
+  let ttx=Math.max(0,Math.min(TGRD-1,Math.floor(tcx/TILE))), tty=Math.max(0,Math.min(TGRD-1,Math.floor(tcy/TILE)));
+  if(!tileWalkable(ttx,tty)){                              // aim for the nearest walkable tile instead
+    let best=null, bd=1e9;
+    for(let r=1;r<=3 && !best;r++){ for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+      if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
+      const nx=ttx+dx, ny=tty+dy; if(!tileWalkable(nx,ny)) continue;
+      const d=Math.hypot(nx-stx,ny-sty);
+      if(d<bd){ bd=d; best={x:nx,y:ny}; } } if(best) break; }
+    if(!best) return null; ttx=best.x; tty=best.y;
+  }
+  const centre=(t)=>({x:(t%TGRD)*TILE+1, y:((t/TGRD)|0)*TILE+1});
+  const S=sty*TGRD+stx, T=tty*TGRD+ttx;
+  if(S===T) return [centre(T)];                            // a tap inside your own tile → step to its centre
+  const gen=++_tpGen, G=_tpG, PREV=_tpPrev, MK=_tpMark;
+  const walk=(tx,ty)=> (tx===stx&&ty===sty) || tileWalkable(tx,ty);   // never trap the walker on its own tile
+  // binary heap frontier (same discipline as the cell-grade A*)
+  const hIdx=[], hF=[];
+  const hPush=(i,f)=>{ let c=hIdx.length; hIdx.push(i); hF.push(f);
+    while(c>0){ const p=(c-1)>>1; if(hF[p]<=hF[c]) break;
+      const ti=hIdx[p]; hIdx[p]=hIdx[c]; hIdx[c]=ti; const tf=hF[p]; hF[p]=hF[c]; hF[c]=tf; c=p; } };
+  const hPop=()=>{ const top=hIdx[0]; const li=hIdx.pop(), lf=hF.pop();
+    if(hIdx.length){ hIdx[0]=li; hF[0]=lf; let c=0;
+      for(;;){ let sm=c; const l=c*2+1, r=l+1;
+        if(l<hIdx.length && hF[l]<hF[sm]) sm=l;
+        if(r<hIdx.length && hF[r]<hF[sm]) sm=r;
+        if(sm===c) break;
+        const ti=hIdx[sm]; hIdx[sm]=hIdx[c]; hIdx[c]=ti; const tf=hF[sm]; hF[sm]=hF[c]; hF[c]=tf; c=sm; } }
+    return top; };
+  G[S]=0; PREV[S]=-1; MK[S]=gen; hPush(S, Math.hypot(ttx-stx,tty-sty));
+  let found=false, guard=0;
+  while(hIdx.length && guard++<60000){
+    const cur=hPop();
+    if(cur===T){ found=true; break; }
+    const cx2=cur%TGRD, cy2=(cur/TGRD)|0;
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy) continue;
+      const nx=cx2+dx, ny=cy2+dy;
+      if(!walk(nx,ny)) continue;
+      if(dx&&dy && !(walk(cx2+dx,cy2)&&walk(cx2,cy2+dy))) continue;   // no corner cutting
+      const ni=ny*TGRD+nx, ng=G[cur]+((dx&&dy)?1.41421:1);
+      if(MK[ni]===gen && ng>=G[ni]) continue;
+      MK[ni]=gen; G[ni]=ng; PREV[ni]=cur; hPush(ni, ng+Math.hypot(ttx-nx,tty-ny));
+    }
+  }
+  if(!found) return null;
+  const path=[]; let cur=T;
+  while(cur!==S && cur!==-1){ path.push(centre(cur)); cur=PREV[cur]; }
+  path.reverse(); return path;
+}
 /* --- A* pathfinding (8-dir, no corner cutting). size=2 needs a clear 2x2 footprint --- */
 function findPath(sx,sy,tx,ty,size){
+  if(mapMode==='forest') return findPathTiles(sx,sy,tx,ty);   // the surface world walks the 3m tile grid
   size=size||1;
   const blk=(x,y)=>{ if(size<2) return isBlocked(x,y);
     for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++) if(isBlocked(x+dx,y+dy)) return true; return false; };
@@ -899,7 +965,7 @@ function makeSkeleton(x,y){           // a raised skeleton warrior: fast, punche
 function respawnGoblins(){                 // the woods west of the river are never goblin-free for long: 5 slink back in
   const maxX=Math.max(5, (world.creekMinX!=null?world.creekMinX:GRID)-2);
   const westOpen=()=>{ for(let i=0;i<500;i++){ const x=2+((Math.random()*(maxX-2))|0), y=2+((Math.random()*(GRID-4))|0);
-    if(!isBlocked(x,y) && !occupied(x,y,null)) return {x,y}; } return randOpenCell(); };
+    if(spawnableCell(x,y) && !occupied(x,y,null)) return {x,y}; } return randOpenCell(); };
   const bows=[];
   for(let i=0;i<6;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // 6 bow goblins…
   for(let i=0;i<9;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // …trailed by 9 claws
@@ -907,7 +973,7 @@ function respawnGoblins(){                 // the woods west of the river are ne
 function spawnRoamers(){
   const maxX=Math.max(5, (world.creekMinX!=null?world.creekMinX:GRID)-2);   // stay on the west (goblin) bank
   const westOpen=()=>{ for(let i=0;i<500;i++){ const x=2+((Math.random()*(maxX-2))|0), y=2+((Math.random()*(GRID-4))|0);
-    if(!isBlocked(x,y)) return {x,y}; } return randOpenCell(); };
+    if(spawnableCell(x,y)) return {x,y}; } return randOpenCell(); };
   const bows=[];
   for(let i=0;i<9;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // bow goblins
   for(let i=0;i<21;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // followers
@@ -940,10 +1006,12 @@ function nearestTree(g){
   for(const t of world.trees){ const dd=Math.hypot((t.x+1.5)*CELL-g.px, (t.y+1.5)*CELL-g.py); if(dd<bd){ bd=dd; best=t; } }
   return best;
 }
-function goblinChopApproach(g, tree){     // a reachable open cell beside the tree's 3m tile
+function goblinChopApproach(g, tree){     // a reachable neighbouring TILE centre beside the tree
   const cells=[], gcx=cellOf(g.px), gcy=cellOf(g.py);
-  for(let dy=-1;dy<=TILE;dy++) for(let dx=-1;dx<=TILE;dx++){ if(dx>=0&&dx<TILE&&dy>=0&&dy<TILE) continue;
-    const x=tree.x+dx, y=tree.y+dy; if(!isBlocked(x,y)) cells.push({x,y}); }
+  const ttx=Math.floor(tree.x/TILE), tty=Math.floor(tree.y/TILE);
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy) continue;
+    const nx=ttx+dx, ny=tty+dy; if(!tileWalkable(nx,ny)) continue;
+    cells.push({x:nx*TILE+1, y:ny*TILE+1}); }
   cells.sort((a,b)=>(Math.hypot(a.x-gcx,a.y-gcy)-Math.hypot(b.x-gcx,b.y-gcy)));
   for(const c of cells){ const path=findPath(gcx,gcy,c.x,c.y,1); if(path) return path.map(p=>({x:(p.x+0.5)*CELL,y:(p.y+0.5)*CELL})); }
   return null;
@@ -1096,7 +1164,7 @@ function updateArcher(g, dt){
     if(!g.chopTree || !world.trees.includes(g.chopTree)){ g.chopTree=null; g.gstate='camp'; return; }
     if(g.gpath && g.gpath.length){ goblinMove(g, GOB_SPEED, dt); return; }   // still walking over
     const t=g.chopTree, gcx=cellOf(g.px), gcy=cellOf(g.py);
-    if(!(gcx>=t.x-1&&gcx<=t.x+TILE && gcy>=t.y-1&&gcy<=t.y+TILE)){ g.gstate='camp'; g.chopTree=null; return; }
+    if(!(gcx>=t.x-2&&gcx<=t.x+TILE+1 && gcy>=t.y-2&&gcy<=t.y+TILE+1)){ g.gstate='camp'; g.chopTree=null; return; }
     g.face=face4((t.x+1.5)*CELL-g.px, (t.y+1.5)*CELL-g.py); g.hopAmt=0;
     g.chopT=(g.chopT||0)+dt;
     g.chipT=(g.chipT||0)-dt; if(g.chipT<=0){ g.chipT=1.0; for(let i=0;i<6;i++) spawnChip((t.x+1.5)*CELL,(t.y+2.4)*CELL); }
@@ -1422,17 +1490,17 @@ function updatePlayer(dt){
   if(!player.path.length){
     player.targetCell=null;
     if(player.goShop){ const d=shopDoorCell();                    // arrived at the door → open the shop
-      if(Math.abs(cellOf(player.px)-d.x)<=1 && Math.abs(cellOf(player.py)-d.y)<=1) openShop(); else player.goShop=false; }
+      if(Math.abs(cellOf(player.px)-d.x)<=2 && Math.abs(cellOf(player.py)-d.y)<=2) openShop(); else player.goShop=false; }
     if(player.goStall){ const d=stallDoorCell();
-      if(Math.abs(cellOf(player.px)-d.x)<=1 && Math.abs(cellOf(player.py)-d.y)<=1) openStall(); else player.goStall=false; }
+      if(Math.abs(cellOf(player.px)-d.x)<=2 && Math.abs(cellOf(player.py)-d.y)<=2) openStall(); else player.goStall=false; }
     if(player.goButcher){ const d=butcherDoorCell();
-      if(Math.abs(cellOf(player.px)-d.x)<=1 && Math.abs(cellOf(player.py)-d.y)<=1) openButcher(); else player.goButcher=false; }
+      if(Math.abs(cellOf(player.px)-d.x)<=2 && Math.abs(cellOf(player.py)-d.y)<=2) openButcher(); else player.goButcher=false; }
     if(player.goArmor){ const d=armorDoorCell();
-      if(Math.abs(cellOf(player.px)-d.x)<=1 && Math.abs(cellOf(player.py)-d.y)<=1) openArmor(); else player.goArmor=false; }
+      if(Math.abs(cellOf(player.px)-d.x)<=2 && Math.abs(cellOf(player.py)-d.y)<=2) openArmor(); else player.goArmor=false; }
     if(player.goAltar){ const a=henge.altar;
-      if(Math.abs(cellOf(player.px)-a.x)<=1 && Math.abs(cellOf(player.py)-a.y)<=1) openAltar(); else player.goAltar=false; }
+      if(Math.abs(cellOf(player.px)-a.x)<=2 && Math.abs(cellOf(player.py)-a.y)<=2) openAltar(); else player.goAltar=false; }
     if(player.goCave){ const d2=cave.door;
-      if(Math.abs(cellOf(player.px)-d2.x)<=1 && Math.abs(cellOf(player.py)-d2.y)<=1){
+      if(Math.abs(cellOf(player.px)-d2.x)<=2 && Math.abs(cellOf(player.py)-d2.y)<=2){
         if(!cave.unlocked){
           if(player.goblinKey){ setCaveUnlocked();
             if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'cave'});
@@ -1718,13 +1786,13 @@ function setTool(t){                                // switching tools cancels w
 // the body's visual centre, with a forgiving radius. A finger is not a crosshair.
 function tapDist(wx,wy,px,py){ return Math.min(Math.hypot(px-wx, py-wy), Math.hypot(px-wx, (py-CELL*0.7)-wy)); }
 function creatureAt(wx,wy){                         // nearest living deer/goblin under a tap
-  let best=null, bd=CELL*2.2;
+  let best=null, bd=CELL*3.0;
   for(const d of allDeer){ if(d.dead||d.gone) continue; const dd=tapDist(wx,wy,d.px,d.py); if(dd<bd){ bd=dd; best={kind:'deer', ref:d}; } }
   for(const g of goblins){ if(g.dead) continue; const gx=(g.px!=null?g.px:(g.x+0.5)*CELL), gy=(g.py!=null?g.py:(g.y+0.5)*CELL); const dd=tapDist(wx,wy,gx,gy); if(dd<bd){ bd=dd; best={kind:'goblin', ref:g}; } }
   return best;
 }
 function carcassAt(wx,wy){                           // nearest FRESH deer carcass (before it rots to bones) under a tap
-  let best=null, bd=CELL*2.0;
+  let best=null, bd=CELL*2.6;
   for(const d of allDeer){ if(!d.dead || d.gone || (d.deadT||0)>=DEER_FRESH_T) continue; const dd=tapDist(wx,wy,d.px,d.py); if(dd<bd){ bd=dd; best=d; } }
   return best;
 }
@@ -1737,7 +1805,7 @@ function updateCarcass(dt){
   const d=player.carcassTarget;
   if(!d || !d.dead || d.gone || (d.deadT||0)>=DEER_FRESH_T){ player.carcassTarget=null; return true; }   // rotted to bones — too late
   const dist=Math.hypot((player.px-d.px)/CELL, (player.py-d.py)/CELL);
-  if(dist<=1.7){
+  if(dist<=2.3){
     const n=d.antlers?3:d.fawn?1:2, m2=d.antlers?3:d.fawn?1:2;
     const err=canCarry(n*ITEM_LBS.skins+m2*ITEM_LBS.meat, (player.skins>0?0:1)+((player.meat||0)>0?0:1));
     if(err){ packRefuse(err); player.carcassTarget=null; player.path=[]; return true; }   // the carcass keeps — come back lighter
@@ -1759,7 +1827,7 @@ function updateCarcass(dt){
 const SOUL_VALUE = { claw:1, archer:2, skeleton:2, bat:1, rat:1, bigskel:4, boss:5, witch:10, king:25 };   // normal goblin 1; harder foes more
 function soulsFor(g){ return SOUL_VALUE[g.kind]!=null ? SOUL_VALUE[g.kind] : 1; }
 function goblinCorpseAt(wx,wy){                      // nearest fresh, unlooted enemy body under a tap
-  let best=null, bd=CELL*2.0;
+  let best=null, bd=CELL*2.6;
   for(const g of goblins){ if(!g.dead || g.gone || g.looted || (g.deadT||0)>=60) continue;
     const p=creaturePos('goblin', g), dd=tapDist(wx,wy,p.x,p.y); if(dd<bd){ bd=dd; best=g; } }
   return best;
@@ -1781,7 +1849,7 @@ function updateSoulLoot(dt){
   if(!g || !g.dead || g.gone || g.looted || (g.deadT||0)>=60){ player.soulTarget=null; return true; }   // rotted or already looted — the soul has fled
   const p=creaturePos('goblin', g);
   const dist=Math.hypot((player.px-p.x)/CELL, (player.py-p.y)/CELL);
-  if(dist<=1.7){
+  if(dist<=2.3){
     player.path=[]; player.targetCell=null; player.face=face8(p.x-player.px, p.y-player.py);
     const n=soulsFor(g); player.souls=(player.souls||0)+n; g.looted=true; g.deadT=60;   // body is spent — strips to bones
     addFloat('+'+n+(n===1?' soul':' souls'), player.px, player.py-CELL*1.9, '#c7b6f2');
@@ -1888,7 +1956,7 @@ function updatePunch(dt){
   if(world.shopProps.indexOf(p)<0){ player.propTarget=null; player.punchT=0; return true; }   // already gone
   const px=(p.x+0.5)*CELL, py=(p.y+0.5)*CELL;
   const dist=Math.hypot((player.px-px)/CELL, (player.py-py)/CELL);
-  if(dist<=1.7){
+  if(dist<=2.3){
     player.path=[]; player.targetCell=null; player.face=face8(px-player.px, py-player.py);
     player.punchT+=dt;                                                     // brief wind-up so it reads as a punch
     if(player.punchT>=0.24){ breakProp(p); player.propTarget=null; player.punchT=0; }
@@ -1934,11 +2002,13 @@ function treeAt(cx,cy){
   for(const t of world.trees) if(cx>=t.x&&cx<t.x+TILE&&cy>=t.y&&cy<t.y+TILE) return t;
   return null;
 }
-function chopApproach(tree){                       // nearest reachable open cell beside the tree's 3m tile
+function chopApproach(tree){                       // nearest reachable neighbouring TILE centre beside the tree
   const cells=[], pcx=cellOf(player.px), pcy=cellOf(player.py);
-  for(let dy=-1;dy<=TILE;dy++) for(let dx=-1;dx<=TILE;dx++){
-    if(dx>=0&&dx<TILE&&dy>=0&&dy<TILE) continue;
-    const x=tree.x+dx, y=tree.y+dy; if(!isBlocked(x,y)) cells.push({x,y});
+  const ttx=Math.floor(tree.x/TILE), tty=Math.floor(tree.y/TILE);
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    if(!dx&&!dy) continue;
+    const nx=ttx+dx, ny=tty+dy; if(!tileWalkable(nx,ny)) continue;
+    cells.push({x:nx*TILE+1, y:ny*TILE+1});
   }
   cells.sort((a,b)=> (Math.hypot(a.x-pcx,a.y-pcy)-Math.hypot(b.x-pcx,b.y-pcy)));
   for(const c of cells){ const path=findPath(pcx,pcy,c.x,c.y); if(path) return {cell:c, path}; }
@@ -1989,7 +2059,7 @@ function updateChop(dt){
   if(!world.trees.includes(tree)){ player.chopTree=null; player.chopping=false; return; }
   if(player.path.length) return;                   // still walking over
   const pcx=cellOf(player.px), pcy=cellOf(player.py);
-  if(!(pcx>=tree.x-1&&pcx<=tree.x+TILE && pcy>=tree.y-1&&pcy<=tree.y+TILE)){ player.chopTree=null; return; }
+  if(!(pcx>=tree.x-2&&pcx<=tree.x+TILE+1 && pcy>=tree.y-2&&pcy<=tree.y+TILE+1)){ player.chopTree=null; return; }
   player.face = face4((tree.x+1.5)*CELL-player.px, (tree.y+1.5)*CELL-player.py);   // face the tree
   player.chopping=true; player.chopT+=dt;
   // a swing lands about once a second — burst of chips on each hit
@@ -2119,8 +2189,12 @@ function faceParams(f){
   const pitch=(f==='NE'||f==='NW')?1 : (f==='SE'||f==='SW')?-1 : 0;
   return {mode:'side', dir, pitch};
 }
+function spawnableCell(x,y){                 // creatures spawn on tiles they can actually walk out of
+  if(!inGrid(x,y)) return false;
+  return mapMode==='forest' ? tileWalkable(Math.floor(x/TILE), Math.floor(y/TILE)) : !isBlocked(x,y);
+}
 function randOpenCell(){
-  for(let i=0;i<300;i++){ const x=(Math.random()*GRID)|0, y=(Math.random()*GRID)|0; if(!isBlocked(x,y)) return {x,y}; }
+  for(let i=0;i<300;i++){ const x=(Math.random()*GRID)|0, y=(Math.random()*GRID)|0; if(spawnableCell(x,y)) return {x,y}; }
   return { x:SPAWN.x, y:SPAWN.y };
 }
 function makeDeer(leader, antlers, color, scale){
@@ -2522,11 +2596,11 @@ function spawnHerd(){
   const minX = Math.max(2, Math.min(GRID-4, (world.creekMaxX!=null?world.creekMaxX:0) + 2));
   const reset=(d)=>{ d.path=[]; d.state='wander'; d.eatT=0; d.restT=0; d.targetBush=null; d.faceLeft=false; d.dead=false; d.gone=false; d.deadT=0; d.starveT=STARVE_TIME; d.hunger=0; d.hp = d.fawn?1 : d.antlers?10 : 6; };
   const rightCell=()=>{ for(let i=0;i<600;i++){ const x=minX+((Math.random()*(GRID-minX))|0), y=(Math.random()*GRID)|0;
-    if(x<GRID && !isBlocked(x,y)) return {x,y}; } return randOpenCell(); };
+    if(x<GRID && spawnableCell(x,y)) return {x,y}; } return randOpenCell(); };
   const nearOpen=(bx,by,minR,maxR)=>{ for(let i=0;i<200;i++){ const r=minR+((Math.random()*(maxR-minR+1))|0), a=Math.random()*Math.PI*2;
     const x=Math.max(minX,Math.min(GRID-1, bx+Math.round(Math.cos(a)*r)));
     const y=Math.max(0,Math.min(GRID-1, by+Math.round(Math.sin(a)*r)));
-    if(!isBlocked(x,y)) return {x,y}; } return {x:bx,y:by}; };
+    if(spawnableCell(x,y)) return {x,y}; } return {x:bx,y:by}; };
   const bc=rightCell();
   reset(buck); buck.hunger=0; buck.px=(bc.x+0.5)*CELL; buck.py=(bc.y+0.5)*CELL; deerWander(buck);
   for(const d of does){ reset(d); d.hunger=Math.random()*30;
@@ -2541,10 +2615,10 @@ function spawnHerd2(){
   const nearOpen=(bx,by,rad)=>{ for(let i=0;i<200;i++){ const r=1+((Math.random()*rad)|0), a=Math.random()*Math.PI*2;
     const x=Math.max(minX,Math.min(GRID-1, bx+Math.round(Math.cos(a)*r)));
     const y=Math.max(0,Math.min(GRID-1, by+Math.round(Math.sin(a)*r)));
-    if(!isBlocked(x,y)) return {x,y}; } return {x:bx,y:by}; };
+    if(spawnableCell(x,y)) return {x,y}; } return {x:bx,y:by}; };
   let bc=null;
   for(let i=0;i<600 && !bc;i++){ const x=minX+((Math.random()*(GRID-minX))|0), y=(Math.random()*GRID)|0;
-    if(!isBlocked(x,y) && Math.hypot(x-cellOf(buck.px), y-cellOf(buck.py))>18) bc={x,y}; }
+    if(spawnableCell(x,y) && Math.hypot(x-cellOf(buck.px), y-cellOf(buck.py))>18) bc={x,y}; }
   if(!bc) bc={ x:cellOf(buck.px), y:Math.min(GRID-2,cellOf(buck.py)+20) };
   reset(buck2); buck2.hunger=0; buck2.px=(bc.x+0.5)*CELL; buck2.py=(bc.y+0.5)*CELL; deerWander(buck2);
   for(const d of does2){ reset(d); d.hunger=Math.random()*30; const c=nearOpen(bc.x,bc.y,25); d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; deerWander(d); }   // the big herd starts well spread, so early grazing doesn't strip one grove
@@ -3694,7 +3768,17 @@ function draw(){
   const selRing=(wx,wy,r)=>{ const c=worldToScreen(wx,wy); ctx.save(); ctx.strokeStyle=PAL.target;
     ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.beginPath(); ctx.ellipse(c.x,c.y,r,r*0.4,0,0,Math.PI*2); ctx.stroke(); ctx.restore(); };
   if(player.chopTree){ const tr=player.chopTree; selRing((tr.x+1.5)*CELL,(tr.y+2.9)*CELL, CELL*cam.scale*0.95); }
-  else if(player.targetCell){ selRing((player.targetCell.x+0.5)*CELL,(player.targetCell.y+0.5)*CELL, CELL*cam.scale*0.42); }
+  else if(player.targetCell){
+    if(mapMode==='forest'){                                                   // the destination TILE glows until you arrive
+      const dtx=Math.floor(player.targetCell.x/TILE)*TILE, dty=Math.floor(player.targetCell.y/TILE)*TILE;
+      const da=worldToScreen(dtx*CELL,dty*CELL), db=worldToScreen((dtx+TILE)*CELL,(dty+TILE)*CELL);
+      ctx.save();
+      rect(da.x, da.y, db.x-da.x, db.y-da.y, 'rgba(255,235,150,.16)');
+      ctx.strokeStyle='rgba(255,235,150,.85)'; ctx.lineWidth=Math.max(2,DPR*1.8);
+      ctx.strokeRect(da.x, da.y, db.x-da.x, db.y-da.y);
+      ctx.restore();
+    } else selRing((player.targetCell.x+0.5)*CELL,(player.targetCell.y+0.5)*CELL, CELL*cam.scale*0.42);
+  }
 
   // upright sprites — painter's algorithm by depth (world y), back to front
   const items=[];
@@ -5051,7 +5135,7 @@ function respawnHerd(){                      // a fresh little herd wanders in e
   const minX=Math.max(2, Math.min(GRID-4, (world.creekMaxX!=null?world.creekMaxX:0)+2));
   let bc=null;
   for(let i=0;i<600 && !bc;i++){ const x=minX+((Math.random()*(GRID-minX))|0), y=(Math.random()*GRID)|0;
-    if(!isBlocked(x,y) && !occupied(x,y,null)) bc={x,y}; }
+    if(spawnableCell(x,y) && !occupied(x,y,null)) bc={x,y}; }
   if(!bc) bc={x:Math.min(GRID-2,minX+5), y:(GRID/2)|0};
   const nb=makeDeer(null, true, C_BUCK, 0.945);
   nb.px=(bc.x+0.5)*CELL; nb.py=(bc.y+0.5)*CELL;
