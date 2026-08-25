@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · b';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · c';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -4124,8 +4124,9 @@ function updateHarvest(dt){
     let n=0;
     for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const cc=world.crops.get(gi(bx+dx,by+dy));
       if(cc && cc.stage==='wheat'){ cc.stage='till'; cc.t=0; n++; } }
-    const sBefore=player.stamina; player.stamina=Math.min(100, player.stamina+n);   // reap → +1 stamina per stalk
-    player.wheat=(player.wheat||0)+n; addFloat('+'+n+' wheat', player.px, player.py-CELL*1.9, PAL.wheatStalk);   // …and sheaves for the pantry
+    const gain=Math.ceil(n/3);                                                      // a full plot yields 3 wheat
+    const sBefore=player.stamina; player.stamina=Math.min(100, player.stamina+gain);   // …and matching stamina
+    player.wheat=(player.wheat||0)+gain; addFloat('+'+gain+' wheat', player.px, player.py-CELL*1.9, PAL.wheatStalk);   // sheaves for the pantry
     if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'harv', key});   // tell the host this plot was reaped
     const sGain=Math.round(player.stamina-sBefore); if(sGain>0) addFloat('+'+sGain+' stamina', player.px, player.py-CELL*1.5, PAL.stamFill);
     spawnHarvestFX(px, py); player.harvestTarget=null; player.carcassTarget=null;
