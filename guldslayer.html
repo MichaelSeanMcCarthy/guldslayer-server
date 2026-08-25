@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · j';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · k';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -327,7 +327,8 @@ function generateWorld(){
   // the crafting shops are BUILT by players now — the meadow starts empty
   world.sites=[]; world.shopDirt=[]; world.shopProps=[]; world.shopBlock=new Set(); world._dirtTiles=new Set();
   shop.placed=false; stall.placed=false; butcher.placed=false; armorShop.placed=false;
-  placeBridge();
+  world.builtBridges=[];
+  world.bridge=[]; world.bridgeSet=new Set();       // no bridge is given — players BUILD their crossings now
   buildRoad();
   placeHenge();
   placeCave();
@@ -607,12 +608,15 @@ function placeHenge(){
 // through the village so it fronts the doors — and the verges are kept clear: no tree or bush within 1 tile.
 function buildRoad(){
   world.pathDirt=[]; const TG=GRID/TILE, ps=new Set();                    // ps holds road TILE keys
-  if(!world.bridge.length) return;
   const rng=mulberry32((worldSeed ^ 0x517cc1b7)>>>0);                     // the road's own seeded wobble
   const tKey=(tx,ty)=> ty*TG+tx;
-  const maxX=Math.max(...world.bridge.map(b=>b.x));                       // east end of the bridge
-  const rows=world.bridge.filter(b=>b.x===maxX).map(b=>b.y);
-  const frontTY=Math.floor(Math.min(...rows)/TILE);                       // hold loosely to the bridge's line — no village to straighten for
+  // the trail begins on the creek's EAST bank near the map's middle (no bridge is given any more —
+  // players build their own crossing wherever they like; the worn footpath just serves the east side)
+  let startTX=Math.min(TG-2, Math.floor(((world.creekMaxX!=null?world.creekMaxX:Math.floor(GRID*0.3)))/TILE)+1);
+  let startTY=Math.floor(TG/2);
+  for(let d=0; d<TG; d++){ const cand=Math.floor(TG/2)+((d%2)?-Math.ceil(d/2):Math.ceil(d/2));
+    if(cand>=1 && cand<TG-1 && !waterTileAt(startTX,cand)){ startTY=cand; break; } }
+  const frontTY=startTY;                                                  // hold loosely to this line — no village to straighten for
   const carve=(tx,ty)=>{                                                  // pave one whole 3m tile
     if(tx<0||ty<0||tx>=TG||ty>=TG || ps.has(tKey(tx,ty))) return;
     const x0=tx*TILE, y0=ty*TILE;
@@ -624,8 +628,8 @@ function buildRoad(){
       if(world.terrain[gi(x,y)]===1) world.terrain[gi(x,y)]=0;            // tree-marked ground is cleared as the road is cut
       world.pathDirt.push({x,y,edge:false}); }
   };
-  let ty=Math.floor(Math.min(...rows)/TILE);                              // pick the trail up right off the bridge planks
-  for(let tx=Math.floor((maxX+1)/TILE); tx<TG; tx++){
+  let ty=startTY;                                                         // pick the trail up on the east bank
+  for(let tx=startTX; tx<TG; tx++){
     const pty=ty;
     if(rng()<0.34) ty += (rng()<0.5?-1:1);                                // wander a tile…
     if(ty<frontTY-2) ty++; else if(ty>frontTY+2) ty--;                    // …but stay loosely along the same line of travel
@@ -1583,30 +1587,33 @@ const BUILDINGS = {
   armor:   { name:'Armor Shop',  tiles:2, cost:30, sum:'Sells leather armor, chain mail and packs.' },
   stall:   { name:'Seed Stall',  tiles:1, cost:15, sum:'Sells wheat seeds and the garden hoe.' },
   butcher: { name:'The Butcher', tiles:1, cost:15, sum:'Smokes jerky and cooks meals from meat and wheat.' },
+  bridge:  { name:'Bridge', tiles:1, cost:10, sum:'A plank crossing — sits ONLY on water. Chain tiles to span the creek.' },
 };
 const buildUI = { open:false };
 const siteUI  = { open:false, id:null };
 let buildMode = null;                 // {kind, tx, ty} — tx/ty in TILES; null tx = nothing hovered yet
 let _buildConfirmBox = null;          // screen-space "Build here" button while the ghost is green
 let _siteSeq = 1;
-function buildingPlaced(kind){ return kind==='shop'?shop.placed : kind==='armor'?armorShop.placed : kind==='stall'?stall.placed : butcher.placed; }
+function buildingPlaced(kind){ return kind==='bridge'?false : kind==='shop'?shop.placed : kind==='armor'?armorShop.placed : kind==='stall'?stall.placed : butcher.placed; }
 function siteById(id){ return (world.sites||[]).find(s=>s.id===id); }
 function siteAt(cx,cy){ for(const s of (world.sites||[])){ const n=BUILDINGS[s.kind].tiles*TILE;
   if(cx>=s.tx*TILE && cx<s.tx*TILE+n && cy>=s.ty*TILE && cy<s.ty*TILE+n) return s; } return null; }
-function buildFootprintFree(kind, tx, ty){          // every cell of the claimed tiles must be open ground
+function buildFootprintFree(kind, tx, ty){          // shops want open ground; a bridge wants nothing but water
   const B=BUILDINGS[kind]; if(!B) return false;
   const n=B.tiles*TILE, x0=tx*TILE, y0=ty*TILE;
   if(tx<0||ty<0||x0+n>GRID||y0+n>GRID) return false;
   for(let dy=0;dy<n;dy++) for(let dx=0;dx<n;dx++){ const x=x0+dx, y=y0+dy;
-    if(isBlocked(x,y) || world.terrain[gi(x,y)]!==0 || isCrop(x,y)) return false;
-    if(world.bridgeSet && world.bridgeSet.has(gi(x,y))) return false; }
+    if(world.bridgeSet && world.bridgeSet.has(gi(x,y))) return false;
+    if(kind==='bridge'){ const v=world.terrain[gi(x,y)];
+      if(!(v===2||v===3||v===4)) return false; }                          // every cell must be water (shallow counts)
+    else if(isBlocked(x,y) || world.terrain[gi(x,y)]!==0 || isCrop(x,y)) return false; }
   for(const s of (world.sites||[])){ const sn2=BUILDINGS[s.kind].tiles;   // don't overlap another site
     if(!(tx+B.tiles<=s.tx || s.tx+sn2<=tx || ty+B.tiles<=s.ty || s.ty+sn2<=ty)) return false; }
   return true;
 }
 function addSite(kind, tx, ty){                     // authoritative (host / solo)
   if(!BUILDINGS[kind] || buildingPlaced(kind)) return null;
-  if((world.sites||[]).some(s=>s.kind===kind)) return null;      // one site per building kind
+  if(kind!=='bridge' && (world.sites||[]).some(s=>s.kind===kind)) return null;   // one site per SHOP kind; bridges chain freely
   if(!buildFootprintFree(kind, tx, ty)) return null;
   const s={ id:_siteSeq++, kind, tx, ty, need:BUILDINGS[kind].cost, have:0 };
   world.sites.push(s); return s;
@@ -1615,9 +1622,32 @@ function siteAddWood(s, n){                         // authoritative
   if(!s || n<=0) return; s.have=Math.min(s.need, s.have+n);
   if(s.have>=s.need) completeSite(s);
 }
+function waterTileAt(tx,ty){ if(tx<0||ty<0||tx>=GRID/TILE||ty>=GRID/TILE) return false;
+  const v=world.terrain[gi(tx*TILE+1, ty*TILE+1)]; return v===2||v===3||v===4; }
+function placeBridgeTileAt(tx, ty, vert){           // lay planks across one whole water tile
+  world.builtBridges=world.builtBridges||[];
+  if(world.builtBridges.some(b=>b[0]===tx&&b[1]===ty)) return;
+  let vertical;
+  if(vert!=null) vertical=!!vert;                                  // a synced tile keeps the host's orientation
+  else {
+    const nb=world.builtBridges.find(b=>Math.abs(b[0]-tx)+Math.abs(b[1]-ty)===1);
+    const landN=!waterTileAt(tx,ty-1), landS=!waterTileAt(tx,ty+1), landE=!waterTileAt(tx+1,ty), landW=!waterTileAt(tx-1,ty);
+    if(nb) vertical=!!nb[2];                                       // a chained plank always runs with its neighbor
+    else if((landE||landW) && !(landN||landS)) vertical=false;     // land only east/west → the crossing runs east-west
+    else if((landN||landS) && !(landE||landW)) vertical=true;      // land only ahead/behind → north-south
+    else vertical=!(landE||landW);                                 // corner or open water: prefer east-west (the creek runs N-S)
+  }
+  world.builtBridges.push([tx,ty,vertical?1:0]);
+  const x0=tx*TILE, y0=ty*TILE;
+  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const x=x0+dx, y=y0+dy;
+    world.bridge.push({x,y, vertical, edge: vertical?(dx===0?'w':dx===2?'e':null):(dy===0?'n':dy===2?'s':null), post:false});
+    world.bridgeSet.add(gi(x,y)); }
+  mmCanvas=null;
+}
 function completeSite(s){
   const x0=s.tx*TILE, y0=s.ty*TILE;
-  if(s.kind==='shop') placeShopAt(x0+1, y0+1);                   // 4x4 building centred in its 2x2 claimed tiles
+  if(s.kind==='bridge') placeBridgeTileAt(s.tx, s.ty);
+  else if(s.kind==='shop') placeShopAt(x0+1, y0+1);               // 4x4 building centred in its 2x2 claimed tiles
   else if(s.kind==='armor') placeArmorShopAt(x0+1, y0+1);
   else if(s.kind==='stall') placeStallAt(x0, y0);                // 2x2 stall in its single tile
   else if(s.kind==='butcher') placeButcherAt(x0, y0);
@@ -4431,7 +4461,7 @@ function drawBuildUI(){
   ctx.fillText('You have '+player.wood+' wood \u00b7 anyone can add wood to a site', lx, L.py+L.headH*0.78);
   for(const row of L.rows){
     const B=BUILDINGS[row.kind], midY=row.y+row.h*0.5;
-    const placed=buildingPlaced(row.kind), sited=(world.sites||[]).some(s=>s.kind===row.kind);
+    const placed=buildingPlaced(row.kind), sited=row.kind!=='bridge' && (world.sites||[]).some(s=>s.kind===row.kind);
     ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.font='bold '+Math.round(Math.max(14, row.h*0.28))+'px system-ui, sans-serif';
     ctx.fillText(B.name, lx, midY-row.h*0.22);
@@ -4457,7 +4487,7 @@ function buildUIClick(cx,cy){
   const L=buildUILayout(), inR=(r)=> cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
   if(inR(L.closeBtn)){ buildUI.open=false; return; }
   for(const row of L.rows){ if(inR(row.btn)){
-    if(buildingPlaced(row.kind) || (world.sites||[]).some(s=>s.kind===row.kind)) return;
+    if(buildingPlaced(row.kind) || (row.kind!=='bridge' && (world.sites||[]).some(s=>s.kind===row.kind))) return;
     buildUI.open=false; buildMode={kind:row.kind, tx:null, ty:null}; _buildConfirmBox=null; return; } }
   if(cx<L.px||cx>L.px+L.pw||cy<L.py||cy>L.py+L.ph) buildUI.open=false;
 }
@@ -4482,9 +4512,15 @@ function drawBuildGhost(){                          // ground-select: the buildi
   ctx.strokeRect(a.x, a.y, b.x-a.x, b.y-a.y);
   // a simple ghosted building: walls + roof, tinted by validity
   ctx.globalAlpha=0.5;
-  const gw=(b.x-a.x)*0.72, gh=(b.y-a.y)*0.5, gx=(a.x+b.x)/2-gw/2, gy=b.y-(b.y-a.y)*0.12-gh;
-  rect(gx, gy, gw, gh, ok?'#9fdc9a':'#e08a80');
-  tri([gx-gw*0.08, gy],[gx+gw*1.08, gy],[gx+gw*0.5, gy-gh*0.75], ok?'#7cc276':'#c86a5e');
+  if(bm.kind==='bridge'){                                          // ghost planks lying flat on the water
+    const pw2=(b.x-a.x)*0.86, px2=(a.x+b.x)/2-pw2/2;
+    for(let i=0;i<3;i++){ const py2=a.y+(b.y-a.y)*(0.16+i*0.28);
+      rect(px2, py2, pw2, (b.y-a.y)*0.16, ok?'#9fdc9a':'#e08a80'); }
+  } else {
+    const gw=(b.x-a.x)*0.72, gh=(b.y-a.y)*0.5, gx=(a.x+b.x)/2-gw/2, gy=b.y-(b.y-a.y)*0.12-gh;
+    rect(gx, gy, gw, gh, ok?'#9fdc9a':'#e08a80');
+    tri([gx-gw*0.08, gy],[gx+gw*1.08, gy],[gx+gw*0.5, gy-gh*0.75], ok?'#7cc276':'#c86a5e');
+  }
   ctx.globalAlpha=1;
   if(ok){                                            // the confirm button floats under the ghost
     const bw2=Math.max(150, 130*DPR), bh2=Math.max(34,30*DPR);
@@ -5820,6 +5856,7 @@ function buildSnap(){
     sn.deer=deer; sn.deerFull=extras?1:0; }
   if(extras){
     sn.sites=(world.sites||[]).map(s=>[s.id,s.kind,s.tx,s.ty,s.need,s.have]);
+    sn.brg=(world.builtBridges||[]).slice();
     sn.bld=[shop.placed?[shop.x,shop.y]:0, stall.placed?[stall.x,stall.y]:0, butcher.placed?[butcher.x,butcher.y]:0, armorShop.placed?[armorShop.x,armorShop.y]:0];
     const bush=[]; for(const b of world.bushes) bush.push(b.grow==null?[b.x,b.y]:[b.x,b.y,+(+b.grow).toFixed(2)]);
     const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?1:2]);   // crops so the guest sees wheat ripen
@@ -5846,6 +5883,7 @@ function netApplySnap(m){                              // world portion of a sna
   if(m.gobFull){ for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); } }
   if(m.sites){ world.sites=m.sites.map(a2=>({id:a2[0],kind:a2[1],tx:a2[2],ty:a2[3],need:a2[4],have:a2[5]}));
     if(siteUI.open && !siteById(siteUI.id)) siteUI.open=false; }
+  if(m.brg){ for(const b of m.brg){ if(!(world.builtBridges||[]).some(x2=>x2[0]===b[0]&&x2[1]===b[1])) placeBridgeTileAt(b[0], b[1], b[2]); } }
   if(m.bld){ const [bS,bSt,bBu,bAr]=m.bld;
     if(bS && !shop.placed) placeShopAt(bS[0],bS[1]);
     if(bSt && !stall.placed) placeStallAt(bSt[0],bSt[1]);
