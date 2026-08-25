@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · a';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · b';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -1951,11 +1951,15 @@ function tillOrUntill(cx,cy){
   }
   if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'till', cx, cy});   // mirror the plot on the host
 }
-function plantSeeds(cx,cy){                        // sow wheat on a tilled plot cell
+function plantSeeds(cx,cy){                        // sow wheat: ONE seed plants the whole 3m plot
   if(player.seeds<=0) return;
-  const c=world.crops.get(gi(cx,cy));
-  if(c && c.stage==='till'){ c.stage='seed'; c.t=0; player.seeds--; if(player.seeds<=0 && player.tool==='seeds') player.tool=null;
-    if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'plant', key:gi(cx,cy)}); }  // host grows it; out of seeds → nothing selected
+  const bx=cx-(cx%TILE), by=cy-(cy%TILE), cells=[];
+  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(bx+dx,by+dy));
+    if(c && c.stage==='till') cells.push(c); }
+  if(!cells.length) return;
+  for(const c of cells){ c.stage='seed'; c.t=0; }
+  player.seeds--; if(player.seeds<=0 && player.tool==='seeds') player.tool=null;   // out of seeds → nothing selected
+  if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'plant', key:gi(bx,by)});   // host sows the same plot
 }
 function updateCrops(dt){                          // sown seeds sprout into wheat after 10s
   for(const c of world.crops.values()){ if(c.stage==='seed'){ c.t+=dt; if(c.t>=10) c.stage='wheat'; } }
@@ -3569,12 +3573,13 @@ function draw(){
     for(let k=1;k<=4;k++){ const yy=y0+h*k/5; ctx.moveTo(x0+1,yy); ctx.lineTo(x0+w-1,yy); }
     ctx.stroke();
   }
-  for(const [key,c] of world.crops){ if(c.stage!=='seed') continue;         // scattered seeds stay per sown cell
+  for(const [key,c] of world.crops){ if(c.stage!=='seed') continue;         // scattered seeds, drawn once across the whole plot
     const cx=key%GRID, cy=(key/GRID)|0;
-    const a=worldToScreen(cx*CELL,cy*CELL), b=worldToScreen((cx+1)*CELL,(cy+1)*CELL);
+    if(cx%TILE || cy%TILE) continue;                                        // one scatter per plot, from its origin cell
+    const a=worldToScreen(cx*CELL,cy*CELL), b=worldToScreen((cx+TILE)*CELL,(cy+TILE)*CELL);
     if(a.x>canvas.width||a.y>canvas.height||b.x<0||b.y<0) continue;
     const w=b.x-a.x, h=b.y-a.y;
-    for(let i=0;i<5;i++){ const sx=a.x+w*(0.2+0.15*i), sy=a.y+h*(0.35+0.28*((i*3)%2)); circle(sx,sy,Math.max(1,w*0.05),PAL.wheatSeed); }
+    for(let i=0;i<12;i++){ const sx=a.x+w*(0.1+((i*53)%78)/100), sy=a.y+h*(0.12+((i*37)%72)/100); circle(sx,sy,Math.max(1,w*0.018),PAL.wheatSeed); }
   }
 
   // creek: shallow / mid / deep rings
@@ -3652,7 +3657,8 @@ function draw(){
     }
     else if(player.harvestTarget!=null){                                               // reaping a wheat plot
       const k=player.harvestTarget, c=world.crops.get(k);
-      if(c && c.stage==='wheat') ring={ x:(k%GRID+0.5)*CELL, y:(((k/GRID)|0)+0.5)*CELL, rr:u*0.55, col:'74,140,255' };
+      if(c && c.stage==='wheat'){ const hx=k%GRID, hy=(k/GRID)|0, hbx=hx-(hx%TILE), hby=hy-(hy%TILE);
+        ring={ x:(hbx+TILE/2)*CELL, y:(hby+TILE/2)*CELL, rr:u*1.5, col:'74,140,255' }; }   // the ring wraps the whole plot
     }
     else if(player.carcassTarget && player.carcassTarget.dead && !player.carcassTarget.gone){   // looting a deer carcass
       const d2=player.carcassTarget; ring={ x:d2.px, y:d2.py, rr:(d2.antlers?u*0.68:d2.fawn?u*0.4:u*0.55), col:'74,140,255' };
@@ -4110,18 +4116,22 @@ function spawnHarvestFX(x,y){                       // a burst of golden wheat b
 function updateHarvest(dt){
   const key=player.harvestTarget; const c=world.crops.get(key);
   if(!c || c.stage!=='wheat'){ player.harvestTarget=null; player.carcassTarget=null; return true; }   // gone / not ripe anymore
-  const x=key%GRID, y=(key/GRID)|0, px=(x+0.5)*CELL, py=(y+0.5)*CELL;
+  const x=key%GRID, y=(key/GRID)|0, bx=x-(x%TILE), by=y-(y%TILE);
+  const px=(bx+TILE/2)*CELL, py=(by+TILE/2)*CELL;                     // the plot's centre — one reap gathers the whole tile
   const dist=Math.hypot((player.px-px)/CELL, (player.py-py)/CELL);
-  if(dist<=1.6){
+  if(dist<=2.3){
     player.path=[]; player.targetCell=null; player.face=face8(px-player.px, py-player.py);
-    c.stage='till'; c.t=0; const sBefore=player.stamina; player.stamina=Math.min(100, player.stamina+1);   // reap → +1 stamina
-    player.wheat=(player.wheat||0)+1; addFloat('+1 wheat', player.px, player.py-CELL*1.9, PAL.wheatStalk);   // …and a sheaf for the pantry
+    let n=0;
+    for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const cc=world.crops.get(gi(bx+dx,by+dy));
+      if(cc && cc.stage==='wheat'){ cc.stage='till'; cc.t=0; n++; } }
+    const sBefore=player.stamina; player.stamina=Math.min(100, player.stamina+n);   // reap → +1 stamina per stalk
+    player.wheat=(player.wheat||0)+n; addFloat('+'+n+' wheat', player.px, player.py-CELL*1.9, PAL.wheatStalk);   // …and sheaves for the pantry
     if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'harv', key});   // tell the host this plot was reaped
     const sGain=Math.round(player.stamina-sBefore); if(sGain>0) addFloat('+'+sGain+' stamina', player.px, player.py-CELL*1.5, PAL.stamFill);
     spawnHarvestFX(px, py); player.harvestTarget=null; player.carcassTarget=null;
   } else {
     player.repathH-=dt;
-    if(!player.path.length || player.repathH<=0){ pathToCell(x,y); player.repathH=0.45; }
+    if(!player.path.length || player.repathH<=0){ pathToCell(bx+1,by+1); player.repathH=0.45; }
   }
   return false;   // harvesting owns the player this frame
 }
@@ -5479,9 +5489,11 @@ function netOnData(m, fromClient){
     if(f && f.kind==='goblin' && f.cr.dead && !f.cr.gone && !f.cr.looted){ f.cr.looted=true; f.cr.deadT=Math.max(f.cr.deadT||0,60); } } }
   else if(m.t==='cropAct'){ if(net.mode==='host'){                                              // guest farmed — apply the same change here (snapshots echo it back)
     if(m.op==='till'){ tillOrUntill(m.cx, m.cy); }
-    else if(m.op==='plant'){ const c=world.crops.get(m.key); if(c && c.stage==='till'){ c.stage='seed'; c.t=0; } }
-    else if(m.op==='harv'){ const c=world.crops.get(m.key); if(c && c.stage==='wheat'){ c.stage='till'; c.t=0;
-      const x=m.key%GRID, y=(m.key/GRID)|0; spawnHarvestFX((x+0.5)*CELL,(y+0.5)*CELL); } } } }
+    else if(m.op==='plant'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
+      for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(x0+dx,y0+dy)); if(c && c.stage==='till'){ c.stage='seed'; c.t=0; } } }
+    else if(m.op==='harv'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
+      let n=0; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(x0+dx,y0+dy)); if(c && c.stage==='wheat'){ c.stage='till'; c.t=0; n++; } }
+      if(n) spawnHarvestFX((x0+TILE/2)*CELL,(y0+TILE/2)*CELL); } } }
 }
 function netUpdate(dt){
   if(net.mode==='off' || !net.connected) return;
