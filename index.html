@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · d';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · e';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -1483,9 +1483,9 @@ const ARMOR_ITEMS = [
 ];
 const BUTCHER_ITEMS = [
   { key:'jerky', name:'Venison Jerky', cost:1, cur:'meat', btn:'Smoke', verb:'smoked', costText:'1 Deer Meat',
-    needs:[{amt:1,cur:'meat',label:'1 Deer Meat'}],
+    needs:[{amt:1,cur:'meat',label:'1 Deer Meat'}], eff:'+5 HP · +20 stam',
     give(){ player.jerky=(player.jerky||0)+1; }, owned(){ return player.jerky? 'owned: '+player.jerky : ''; } },
-  { key:'meal', name:'Adventure Meal', btn:'Cook', verb:'cooked', costText:'5 Deer Meat + 20 Wheat',
+  { key:'meal', name:'Adventure Meal', btn:'Cook', verb:'cooked', costText:'5 Deer Meat + 20 Wheat', eff:'+40 HP · full stam',
     needs:[{amt:5,cur:'meat',label:'5 Deer Meat'},{amt:20,cur:'wheat',label:'20 Wheat'}],
     can(){ return (player.meat||0)>=5 && (player.wheat||0)>=20; }, pay(){ player.meat-=5; player.wheat-=20; },
     give(){ player.meal=(player.meal||0)+1; },
@@ -4235,6 +4235,12 @@ function drawShopUI(){
     ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.font='bold '+Math.round(Math.max(14, row.h*0.34))+'px system-ui, sans-serif';
     ctx.fillText(it.name, lx+iu*2.1, midY-row.h*0.14);
+    if(it.eff){ const nw=ctx.measureText(it.name).width;                    // what eating it does, right beside the name
+      const ex=lx+iu*2.1+nw+Math.max(8,row.h*0.16), maxW=row.craft.x-ex-Math.max(6,row.h*0.12);
+      let fs=Math.round(Math.max(11, row.h*0.24));
+      ctx.font=fs+'px system-ui, sans-serif';
+      while(fs>8 && ctx.measureText(it.eff).width>maxW){ fs--; ctx.font=fs+'px system-ui, sans-serif'; }   // shrink to fit before the button
+      ctx.fillStyle='#8fd08a'; ctx.fillText(it.eff, ex, midY-row.h*0.14); }
     ctx.font=Math.round(Math.max(11, row.h*0.26))+'px system-ui, sans-serif';
     const ow=it.owned(); const dmgStr=it.dmg?(String(it.dmg).startsWith('+')?'    '+it.dmg:'    DMG '+it.dmg):'';
     // cost, ingredient by ingredient — anything you're short of reads in red
@@ -4538,15 +4544,16 @@ function eatFood(k){                                  // tap a food button — e
   if(k==='jerky'){
     if((player.jerky||0)<1) return;
     if(player.hp>=player.hpMax && player.stamina>=100){ addFloat('Already full!', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
-    player.jerky--; player.hp=Math.min(player.hpMax, player.hp+10); player.stamina=Math.min(100, player.stamina+20);
-    addFloat('+1 heart', player.px, player.py-CELL*2.1, PAL.heartFull);
+    player.jerky--; player.hp=Math.min(player.hpMax, player.hp+5); player.stamina=Math.min(100, player.stamina+20);
+    addFloat('+5 HP', player.px, player.py-CELL*2.1, PAL.heartFull);
     addFloat('+20 stamina', player.px, player.py-CELL*1.7, PAL.stamFill);
     foodCD=FOOD_CD;
   } else if(k==='meal'){
     if((player.meal||0)<1) return;
     if(player.hp>=player.hpMax && player.stamina>=100){ addFloat('Already full!', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
-    player.meal--; player.hp=player.hpMax; player.stamina=100;
-    addFloat('A hearty feast — fully restored!', player.px, player.py-CELL*2.1, '#ffd44d');
+    player.meal--; player.hp=Math.min(player.hpMax, player.hp+40); player.stamina=100;
+    addFloat('+40 HP — a hearty feast!', player.px, player.py-CELL*2.1, '#ffd44d');
+    addFloat('stamina restored', player.px, player.py-CELL*1.7, PAL.stamFill);
     foodCD=FOOD_CD;
   }
 }
