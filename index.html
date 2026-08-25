@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · m';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · n';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -90,7 +90,11 @@ function levelUpFanfare(){                                           // a level 
   player.hp=player.hpMax; player.stamina=100;
   addFloat('LEVEL '+player.level+'!', player.px, player.py-CELL*2.6, '#ffd44d');
   if(typeof spawnMagicHit==='function') spawnMagicHit(player.px, player.py-CELL*0.5, 1);
-  if(player.level>=RELEASE.capLevel) addFloat('Release '+RELEASE.num+' cap reached', player.px, player.py-CELL*2.0, '#e7c877');
+  if(player.level>=RELEASE.capLevel){                                // the CAPSTONE: the wall is worth climbing (§3)
+    player.guld=(player.guld||0)+500;
+    addFloat('Release '+RELEASE.num+' cap reached!', player.px, player.py-CELL*2.1, '#e7c877');
+    addFloat('+500 GULD — the Guild\'s bounty', player.px, player.py-CELL*1.7, '#ffd44d');
+  }
 }
 
 /* --- hunger & regeneration (§4d of the progression doc) ---
@@ -111,7 +115,7 @@ function updateHunger(dt){                        // runs every frame for the lo
   if(player.stamina>0){                           // FED: regeneration only works while you are fed
     player.starveHp=0;
     if(player.hp<player.hpMax && !player.dead){
-      player.regenT=(player.regenT||0)+dt;
+      player.regenT=(player.regenT||0)+dt*regenMul();     // Regen arrows make the fed trickle tick faster
       while(player.regenT>=HUNGER.regenSecs){ player.regenT-=HUNGER.regenSecs;
         player.hp=Math.min(player.hpMax, player.hp+HUNGER.regenHp); }
     } else player.regenT=0;
@@ -960,12 +964,33 @@ const RACES = {
 const RACE_ORDER = ['human','dwarf','halfling','halforc','elf'];
 // per-race gameplay stats: hpMax (2 HP per heart) and speed multiplier applied to the player's move speed.
 const HP_PER_HEART = 10;              // each HUD heart is worth 10 HP
+/* --- §13 Wurldling race arrows, with §12b's six tuner fixes applied ---
+   -2..+2 per column; each column has its own per-arrow worth (weights from the doc).
+   The fixes: Elf Acc +2→+1 & Dmg 0→−1 · Half-Orc Acc −1→0 & Regen −1→+1 · Dwarf HP +1→+2 & Regen 0→+1.
+   Human is the baseline — its compensation (extra training-card slots) arrives with the card system. */
+const RACE_ARROWS = {
+  human:    { hp: 0, regen: 0, move: 0, dmg: 0, cool: 0, aggro: 0, acc: 0 },
+  elf:      { hp:-1, regen: 1, move: 1, dmg:-1, cool: 1, aggro: 0, acc: 1 },
+  halforc:  { hp: 2, regen: 1, move:-2, dmg: 2, cool:-1, aggro:-2, acc: 0 },
+  dwarf:    { hp: 2, regen: 1, move:-1, dmg: 1, cool: 0, aggro:-1, acc:-1 },
+  halfling: { hp:-2, regen: 0, move: 2, dmg:-1, cool: 0, aggro: 2, acc: 1 },
+};
+const ARROW_WORTH = { hp:0.06, regen:0.15, move:0.08, dmg:0.10, cool:0.10, aggro:0.12, acc:0.05 };
+function raceArrow(col, race){ const a=RACE_ARROWS[race||player.race]||RACE_ARROWS.human; return a[col]||0; }
+const dmgMul   = ()=> 1 + raceArrow('dmg')*ARROW_WORTH.dmg;           // weapon rolls scale with the Dmg arrows
+const coolMul  = ()=> 1 - raceArrow('cool')*ARROW_WORTH.cool;         // + arrows = a faster fighting rhythm
+const regenMul = ()=> 1 + raceArrow('regen')*ARROW_WORTH.regen;       // + arrows = the fed trickle ticks faster
+const missChance = ()=> Math.max(0, Math.min(0.25, 0.10 - raceArrow('acc')*ARROW_WORTH.acc));   // arrows can MISS now
+function aggroMulFor(T){ const r=(T&&T.race)||'human';                 // how easily hostiles notice THAT target
+  return 1 - ((RACE_ARROWS[r]&&RACE_ARROWS[r].aggro)||0)*ARROW_WORTH.aggro; }
+// hpMax and speed are the HP / Move arrows applied to the human baseline (6% and 8% per arrow).
+// carry keeps its hand-tuned pack-system values — it is not an arrow column.
 const RACE_STATS = {
-  human:    { hpMax:50, speed:1.0, carry:100 },      // baseline: 5 hearts, normal speed
-  dwarf:    { hpMax:60, speed:1.0, carry:125 },      // +1 heart; sturdy back
-  halforc:  { hpMax:70, speed:0.8, carry:150 },      // +2 hearts, 20% slower; strongest back
-  halfling: { hpMax:40, speed:1.2, carry:75 },       // -1 heart, 20% faster; small frame
-  elf:      { hpMax:50, speed:1.0, carry:100 },
+  human:    { hpMax:50, speed:1.0,  carry:100 },     // baseline: 5 hearts, normal speed
+  dwarf:    { hpMax:56, speed:0.92, carry:125 },     // HP+2 Move−1 — sturdy and a touch slow
+  halforc:  { hpMax:56, speed:0.84, carry:150 },     // HP+2 Move−2 — a wall that lumbers
+  halfling: { hpMax:44, speed:1.16, carry:75 },      // HP−2 Move+2 — quick and fragile
+  elf:      { hpMax:47, speed:1.08, carry:100 },     // HP−1 Move+1 — light on their feet
 };
 /* --- the pack: everything you carry has weight (GULD and souls are weightless).
        Slots = how many DIFFERENT item types fit; the weight cap comes from your race. --- */
@@ -1199,7 +1224,7 @@ function updateMelee(g, dt){
     }
   }
   const range=boss?3:1.6, dmg=boss?10:5, cd=boss?1.4:1.0, speed=boss?MOVE_SPEED*0.6:MOVE_SPEED*0.9;   // goblins hit for 5, the boss's club for 10
-  if(pd>(g.aggro?9999:8)){                                    // not engaged with a player
+  if(pd>(g.aggro?9999:8*aggroMulFor(T))){                     // not engaged — the Aggro arrows set how close is too close
     if(g.roamer && g.leader){ followLeader(g, dt); return; }  // roaming claw — trail its bow goblin
     g.gpath=[]; goblinDance(g, dt); return;                   // camp goblin — mill at the fire
   }
@@ -1268,14 +1293,14 @@ function updateArcher(g, dt){
       if(g.roamer){ archerRoam(g, dt); } else { g.gpath=[]; goblinDance(g, dt); } return;
     }
   }
-  if(pd<=8){                                                 // only shoots when a player is within 8 tiles
+  if(pd<=8*aggroMulFor(T)){                                  // only shoots when a player strays inside notice range
     g.gpath=[]; g.hopAmt=0;
     g.face=face8(T.px-g.px, T.py-g.py); g.faceLeft=T.px<g.px;
     g.atkCD=(g.atkCD||0)-dt;
     if(g.atkCD<=0){ g.atkCD=1.6; g.arrows--; fireGoblinArrow(g, T); }
     return;
   }
-  if(pd<=20 && !T.dead){                                     // spotted a player — hunt him down into firing range
+  if(pd<=20*aggroMulFor(T) && !T.dead){                      // spotted a player — hunt him down into firing range
     g.hopAmt=0; g.repathG=(g.repathG||0)-dt;
     if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), 1); g.repathG=0.4; }
     goblinMove(g, GOB_SPEED, dt); return;
@@ -1373,7 +1398,7 @@ function updateKing(k, dt){
   const T=nearestFoe(k.px, k.py);
   const pd=Math.hypot(cellOf(k.px)-cellOf(T.px), cellOf(k.py)-cellOf(T.py));
   if(k.st==='throne'){                          // he lounges until you attack or come too close
-    if(!T.dead && (pd<=7 || k.aggro)){ k.st='fight'; addFloat('The Goblin King rises!', k.px, k.py-CELL*3, '#ffd44d'); }
+    if(!T.dead && (pd<=7*aggroMulFor(T) || k.aggro)){ k.st='fight'; addFloat('The Goblin King rises!', k.px, k.py-CELL*3, '#ffd44d'); }
     else return;
   }
   if(T.dead){ k.gpath=[]; return; }
@@ -1999,7 +2024,7 @@ function spookNearbyDeer(dead){                     // a fresh kill panics the h
 }
 const WEAPON_DMG = { club:[3,6], bow:[4,6], longbow:[6,9], sword:[7,11], gaxe:[24,36] };   // sword ≈ a blessed longbow; the Gleaming Axe = 2x an enchanted longbow
 function rollDmg(w){ const r=WEAPON_DMG[w]||[1,1]; const base=r[0]+Math.floor(Math.random()*(r[1]-r[0]+1));
-  return Math.round(base*(1+((player.magic&&player.magic[w])||0))); }   // that weapon's own blessing multiplies the blow
+  return Math.max(1, Math.round(base*(1+((player.magic&&player.magic[w])||0))*dmgMul())); }   // blessing × the race's Dmg arrows
 function alertGoblins(src){                          // an attacked goblin rallies its kin: all within 10 tiles turn on the player
   const sp=creaturePos('goblin', src);
   for(const g of goblins){ if(g.dead||g.gone) continue;
@@ -2096,11 +2121,11 @@ function updateCombat(dt){
     player.path=[]; player.targetCell=null; player.face=face8(p.x-player.px, p.y-player.py);
     if(A.ranged){
       if(player.arrows<=0){ player.attack=null; }                        // out of arrows → stop
-      else if(player.swingCD<=0){ player.swingCD=0.8; player.arrows--; fireArrow(A.ref, A.kind); }   // keep loosing arrows (each does the equipped bow's DMG on hit)
+      else if(player.swingCD<=0){ player.swingCD=0.8*coolMul(); player.arrows--; fireArrow(A.ref, A.kind); }   // keep loosing arrows (each does the equipped bow's DMG on hit)
     } else if(A.fist){                                                   // bare-handed: punch for 2 HP
       if(player.punchT>0) player.punchT-=dt;
-      if(player.swingCD<=0){ player.swingCD=0.7; player.punchT=0.24; coopPlayerDamage(A.kind, A.ref, 2); }
-    } else if(player.swingCD<=0){ player.swingCD=0.6; const mk=player.equipMelee||'club'; coopPlayerDamage(A.kind, A.ref, rollDmg(mk));
+      if(player.swingCD<=0){ player.swingCD=0.7*coolMul(); player.punchT=0.24; coopPlayerDamage(A.kind, A.ref, 2); }
+    } else if(player.swingCD<=0){ player.swingCD=0.6*coolMul(); const mk=player.equipMelee||'club'; coopPlayerDamage(A.kind, A.ref, rollDmg(mk));
       if((player.magic[mk]||0)>0){ const mp=creaturePos(A.kind, A.ref); spawnMagicHit(mp.x, mp.y, player.magic[mk]); } }  // keep swinging the equipped melee weapon
   } else {
     A.repath-=dt;
@@ -2638,7 +2663,7 @@ function updateDeer(d, dt){
   const hungry = d.hunger >= HUNGER_TIME;
   const pd = playerDist(d);
   if(d.antlers){                                                      // bucks are bold — they charge & attack
-    if(pd <= 5) d.angry=true; else if(pd > 6){ d.angry=false; d.planted=false; }  // disengage & un-plant once 6+ away
+    if(pd <= 5*aggroMulFor(player)) d.angry=true; else if(pd > 6){ d.angry=false; d.planted=false; }  // disengage & un-plant once 6+ away
     if(d.angry){ buckCharge(d, dt, pd); return; }                     // a threatened buck stands and fights — hungry or not
     if(!hungry && (d.wantMate || d.mateTarget)){ if(buckMate(d, dt)) return; }   // every 3rd meal, court the nearest doe (hunger comes first)
     if(d.state==='flee'||d.state==='alert'){ d.state='wander'; d.path=[]; }
@@ -2912,7 +2937,9 @@ function updateParticles(dt){
       if(p.t>=p.dur){
         if(p.fx){ /* another player's arrow — purely visual here; the shooter resolves the damage */ }
         else if(p.toPlayer){ if(p.toRemote){ if(p.tp && typeof netHitRemote==='function') netHitRemote(p.tp,5,false); } else if(!player.dead) playerHit(5, true); }   // goblin arrow → 5 HP to whichever player
-        else if(!creatureDead(p.tkind,p.ref)){ coopPlayerDamage(p.tkind, p.ref, rollDmg(p.w||'bow')); spawnMagicHit(p.tx, p.ty, player.magic[p.w||'bow']||0); } // player arrow → that bow's DMG (+arcane sparks if enchanted)
+        else if(!creatureDead(p.tkind,p.ref)){
+          if(Math.random()<missChance()){ addFloat('Miss!', p.tx, p.ty-CELL*1.1, '#cfd6de'); }   // the Acc arrows: an arrow can go wide
+          else { coopPlayerDamage(p.tkind, p.ref, rollDmg(p.w||'bow')); spawnMagicHit(p.tx, p.ty, player.magic[p.w||'bow']||0); } } // player arrow → that bow's DMG (+arcane sparks if enchanted)
         else spawnBlood(p.tx,p.ty,8,false);
         particles.splice(i,1); } continue; }
     else if(p.kind==='soul'){ p.t=(p.t||0)+dt;
@@ -5501,7 +5528,12 @@ requestAnimationFrame(loop);
 
 /* --- character select: the tavern is drawn on the canvas (drawTavern); this wires the
        confirmation dialog (still a small DOM modal) and the title -> tavern transition. --- */
-const RACE_BLURB={ human:'Versatile and balanced. Carries 100 lbs.', dwarf:'Short, thick and strong. Carries 125 lbs.', halfling:'Small and nimble. Carries 75 lbs.', halforc:'Big, brawny and fierce. Carries 150 lbs.', elf:'Tall, slender and swift. Carries 100 lbs.' };
+const RACE_BLURB={
+  human:    'Versatile and balanced — the baseline in everything. Carries 100 lbs.',
+  dwarf:    'Tough (+2 HP), hardy (+1 regen), strong arm (+1 dmg) — but slow, loud and a poor shot. Carries 125 lbs.',
+  halfling: 'Quick (+2 move), stealthy (+2 aggro), sharp-eyed (+1 acc) — but frail (−2 HP) and weak (−1 dmg). Carries 75 lbs.',
+  halforc:  'A wall (+2 HP), brutal (+2 dmg), resilient (+1 regen) — but lumbering, sluggish, and everything smells him coming. Carries 150 lbs.',
+  elf:      'Fleet (+1 move), keen (+1 acc), quick-handed (+1 cool), self-mending (+1 regen) — but light of frame and gentle of blow. Carries 100 lbs.' };
 const faceSrc=(k)=>(typeof RACE_FACES!=='undefined' && RACE_FACES[k] && RACE_FACES[k].src) || '';
 let _raceModal=null, _mImg=null, _mName=null, _mBlurb=null, _mQ=null, _pendingRace=null;
 function initTavernUI(){
