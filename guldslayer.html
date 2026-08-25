@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-24 · g';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-24 · h';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -5661,7 +5661,7 @@ function initMPMenu(){
   const title=document.getElementById('title'); if(!title) return;
   const startTxt=title.querySelector('.start'); if(startTxt) startTxt.textContent='Tap to Begin';   // the old red pulse, back where it belongs
   const bd=document.createElement('div'); bd.textContent=BUILD;                 // tiny build stamp so anyone can tell which version they're running
-  bd.style.cssText='position:absolute;right:14px;bottom:10px;color:#5c1212;font:600 11px system-ui,sans-serif;letter-spacing:.14em;opacity:.9';
+  bd.style.cssText='position:absolute;right:14px;bottom:10px;color:#e03030;font:600 12px system-ui,sans-serif;letter-spacing:.14em;opacity:.95';
   title.appendChild(bd);
   const st=document.createElement('style');
   st.textContent=
