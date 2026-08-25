@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · s';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · t';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2358,7 +2358,214 @@ function plantSeeds(cx,cy){                        // sow wheat: ONE seed plants
 function updateCrops(dt){                          // sown seeds sprout into wheat after 10s
   for(const c of world.crops.values()){ if(c.stage==='seed'){ c.t+=dt; if(c.t>=10) c.stage='wheat'; } }
 }
+/* ===== player-to-player trading =====
+   Tap a player → walk to them → a handshake appears. Tap it and a trade window opens (they get an
+   invite and tap the handshake on you to join). Each side builds an offer — items AND GULD — and taps
+   TRADE. Any change to either grid clears both accepts. The swap only lands if BOTH packs can hold
+   what they're getting; otherwise the whole trade fails and nothing moves. Messages ride the relay:
+   {t:'tr', to, from, op}. */
+const TRADEABLE=['guld','wood','arrows','skins','wheat','meat','jerky','meal','seeds','iron','silver','club','bow','longbow','sword','gaxe','helmet','armor','leggings','chainmail'];
+const TRADE_NAMES={guld:'GULD', wood:'Wood', arrows:'Arrows', skins:'Skins', wheat:'Wheat', meat:'Deer Meat', jerky:'Jerky', meal:'Adv. Meal', seeds:'Seeds', iron:'Iron Ore', silver:'Silver Ore', club:'Club', bow:'Short Bow', longbow:'Long Bow', sword:'Iron Sword', gaxe:'Gleaming Axe', helmet:'Helmet', armor:'Armor', leggings:'Leggings', chainmail:'Chain Mail'};
+const trade={ open:false, pid:0, joined:false, mine:{}, theirs:{}, mySeq:0, theirSeq:0,
+              myAcc:false, theirAcc:false, myReady:false, theirReady:false, done:false, msg:'', msgT:0 };
+function findRemote(pid){ for(const p of remotePlayers()){ if((p.id|0)===(pid|0)) return p; } return null; }
+function partnerName(pid){ const p=findRemote(pid); return p&&RACES[p.race] ? RACES[p.race].name : 'Traveler'; }
+function tradeAvail(k){                            // how many of k can go on the table (equipped gear stays home)
+  if(k==='guld') return Math.max(0,(player.guld||0)-(trade.mine.guld||0));
+  let n=player[k]||0;
+  if(k===player.equipMelee) n--; if(k===player.equipRanged) n--;                  // the gear on your body isn't for sale
+  if(k==='helmet'&&player.eqHelmet&&player.helmet) n--;
+  if(k==='armor'&&player.eqArmor&&player.armor) n--;
+  if(k==='leggings'&&player.eqLeggings&&player.leggings) n--;
+  if(k==='chainmail'&&player.eqChainmail&&player.chainmail) n--;
+  return Math.max(0, n-(trade.mine[k]||0));
+}
+function tradeFits(){                              // could I hold what I'd walk away with?
+  let w=packWeight();
+  const types=new Set(); for(const k in ITEM_LBS){ if((player[k]||0)>0) types.add(k); }
+  for(const k in trade.mine){ if(k==='guld') continue;
+    w-=(ITEM_LBS[k]||0)*trade.mine[k]; if((player[k]||0)-trade.mine[k]<=0) types.delete(k); }
+  for(const k in trade.theirs){ if(k==='guld') continue;
+    w+=(ITEM_LBS[k]||0)*trade.theirs[k]; types.add(k); }
+  if(w>carryCap()) return 'Too heavy — '+Math.round(w)+' / '+carryCap()+' lbs';
+  if(types.size>packSlots()) return 'No pack room — '+types.size+' / '+packSlots()+' slots';
+  return null;
+}
+function netSendTrade(msg){ msg.t='tr'; msg.from=net.myId|0; if(msg.to==null) msg.to=trade.pid|0;
+  if(net.mode==='host'){ for(const c of net.clients){ if(c.open && (c.p.id|0)===(msg.to|0)){ try{ c.conn.send(msg); }catch(e){} break; } } }
+  else netSend(msg);
+}
+function openTradeWith(pid){
+  const inv=net._trInvite && (net._trInvite.from|0)===(pid|0);
+  trade.open=true; trade.pid=pid|0; trade.joined=!!inv; trade.mine={}; trade.theirs={};
+  trade.mySeq=0; trade.theirSeq=0; trade.myAcc=false; trade.theirAcc=false; trade.myReady=false; trade.theirReady=false; trade.done=false; trade.msg=''; trade.msgT=0;
+  net._trInvite=null; player.tradeTarget=null; player.path=[]; player.targetCell=null;
+  netSendTrade({op:'open'});
+}
+function tradeReset(){ trade.open=false; trade.pid=0; trade.joined=false; trade.mine={}; trade.theirs={};
+  trade.myAcc=false; trade.theirAcc=false; trade.myReady=false; trade.theirReady=false; trade.done=false; }
+function tradeOfferChanged(){ trade.mySeq++; trade.myAcc=false; trade.theirAcc=false; trade.myReady=false; trade.theirReady=false;
+  netSendTrade({op:'offer', items:Object.assign({},trade.mine), seq:trade.mySeq}); }
+function tradeOfferAdd(k){ const step=k==='guld'?10:1; const av=tradeAvail(k); if(av<=0) return;
+  trade.mine[k]=(trade.mine[k]||0)+Math.min(step,av); tradeOfferChanged(); }
+function tradeOfferRemove(k){ const step=k==='guld'?10:1; if(!trade.mine[k]) return;
+  trade.mine[k]-=Math.min(step,trade.mine[k]); if(trade.mine[k]<=0) delete trade.mine[k]; tradeOfferChanged(); }
+function tradeAccept(){
+  if(!trade.joined){ trade.msg='Waiting for them to join…'; trade.msgT=2.5; return; }
+  const err=tradeFits(); if(err){ trade.msg=err; trade.msgT=3; return; }
+  trade.myAcc=true; netSendTrade({op:'acc', ms:trade.mySeq, ts:trade.theirSeq}); tryTradeCommit();
+}
+function tryTradeCommit(){                          // both said TRADE → verify my pack one last time, then ready up
+  if(!(trade.myAcc && trade.theirAcc) || trade.myReady) return;
+  const err=tradeFits();
+  if(err){ trade.myAcc=false; trade.theirAcc=false; trade.msg=err; trade.msgT=3; netSendTrade({op:'fail'}); return; }
+  trade.myReady=true; netSendTrade({op:'ready', ms:trade.mySeq, ts:trade.theirSeq}); tryTradeFinish();
+}
+function tryTradeFinish(){ if(trade.myReady && trade.theirReady) executeTrade(); }
+function executeTrade(){
+  if(trade.done) return; trade.done=true;
+  for(const k in trade.mine)   player[k]=Math.max(0,(player[k]||0)-trade.mine[k]);
+  for(const k in trade.theirs) player[k]=(player[k]||0)+trade.theirs[k];
+  addFloat('Trade complete!', player.px, player.py-CELL*2.3, '#ffd44d');
+  const got=Object.keys(trade.theirs).map(k=>'+'+trade.theirs[k]+' '+TRADE_NAMES[k]).join('  ');
+  if(got) addFloat(got, player.px, player.py-CELL*1.9, '#8fd07a');
+  tradeReset();
+}
+function handleTrade(m){
+  if(m.op==='open'){
+    if(trade.open && (m.from|0)===(trade.pid|0)){ trade.joined=true; trade.msg=''; }
+    else if(!trade.open){ net._trInvite={from:m.from|0, t:30};
+      addFloat(partnerName(m.from)+' wants to trade! Tap the handshake.', player.px, player.py-CELL*2.6, '#ffd44d'); }
+    return; }
+  if(!trade.open || (m.from|0)!==(trade.pid|0)) return;             // stale or from someone else
+  if(m.op==='offer'){ trade.theirs=m.items||{}; trade.theirSeq=m.seq|0; trade.joined=true;
+    trade.myAcc=false; trade.theirAcc=false; trade.myReady=false; trade.theirReady=false; }
+  else if(m.op==='acc'){ if((m.ms|0)===trade.theirSeq && (m.ts|0)===trade.mySeq){ trade.theirAcc=true; tryTradeCommit(); } }
+  else if(m.op==='ready'){ if((m.ms|0)===trade.theirSeq && (m.ts|0)===trade.mySeq){ trade.theirReady=true; tryTradeFinish(); } }
+  else if(m.op==='fail'){ trade.myAcc=false; trade.theirAcc=false; trade.myReady=false; trade.theirReady=false;
+    trade.msg='Trade failed — their pack is full'; trade.msgT=3; }
+  else if(m.op==='close'){ tradeReset(); addFloat('Trade cancelled', player.px, player.py-CELL*2.1, '#cfd6de'); }
+}
+function tradeTick(dt){
+  if(net._trInvite){ net._trInvite.t-=dt; if(net._trInvite.t<=0) net._trInvite=null; }
+  if(trade.msgT>0) trade.msgT-=dt;
+  if(trade.open){ const p=findRemote(trade.pid);
+    if(!p || !p.active || p.dead || (p.map||'forest')!==mapMode || Math.hypot(player.px-p.px, player.py-p.py)>CELL*10){
+      netSendTrade({op:'close'}); tradeReset(); addFloat('Trade cancelled — too far apart', player.px, player.py-CELL*2.1, '#cfd6de'); } }
+}
+function pickRemotePlayer(wx,wy){                   // the tapped fellow adventurer, if any
+  if(typeof net==='undefined' || net.mode==='off' || !net.connected) return null;
+  let best=null, bd=1e9;
+  for(const p of remotePlayers()){ if(!p.active || p.dead || (p.map||'forest')!==mapMode) continue;
+    const d=Math.hypot(wx-p.px, wy-(p.py-CELL*0.5));
+    if(d<CELL*2.4 && d<bd){ bd=d; best=p; } }
+  return best;
+}
+let _trIconBox=null;
+function drawTradeIcon(){                           // the golden handshake over a would-be trade partner
+  _trIconBox=null;
+  if(trade.open || player.dead) return;
+  let pid=null;
+  if(net._trInvite) pid=net._trInvite.from;
+  else if(player.tradeTarget!=null) pid=player.tradeTarget;
+  if(pid==null) return;
+  const p=findRemote(pid);
+  if(!p || !p.active || p.dead || (p.map||'forest')!==mapMode){ if(player.tradeTarget===pid) player.tradeTarget=null; return; }
+  if(Math.hypot(player.px-p.px, player.py-p.py)>CELL*3.5) return;   // walk closer first
+  const s=worldToScreen(p.px, p.py), u=CELL*cam.scale;
+  const r=Math.max(20, u*0.55), cx=s.x, cy=s.y-u*3.0;
+  const pulse=net._trInvite ? 0.5+0.5*Math.sin(animT*7) : 0;
+  ctx.save();
+  if(pulse){ ctx.strokeStyle='rgba(255,212,77,'+(0.3+0.5*pulse)+')'; ctx.lineWidth=Math.max(3,DPR*2.5);
+    ctx.beginPath(); ctx.arc(cx, cy, r*1.25, 0, Math.PI*2); ctx.stroke(); }
+  circle(cx, cy, r, '#3a2412'); circle(cx, cy, r*0.9, '#e7c877');
+  beam(cx-r*0.55, cy-r*0.18, cx+r*0.25, cy-r*0.18, r*0.16, '#3a2412');           // two clasped arms
+  beam(cx-r*0.25, cy+r*0.18, cx+r*0.55, cy+r*0.18, r*0.16, '#3a2412');
+  tri([cx+r*0.25,cy-r*0.38],[cx+r*0.25,cy+r*0.02],[cx+r*0.62,cy-r*0.18], '#3a2412');
+  tri([cx-r*0.25,cy-r*0.02],[cx-r*0.25,cy+r*0.38],[cx-r*0.62,cy+r*0.18], '#3a2412');
+  ctx.restore();
+  _trIconBox={ x:cx-r*1.3, y:cy-r*1.3, w:r*2.6, h:r*2.6, pid };
+}
+let _trL=null;
+function drawTradeUI(){                             // the trade table: inventory | you give | you get
+  if(!trade.open){ _trL=null; return; }
+  const pw=Math.min(canvas.width*0.96, Math.max(680, 560*DPR));
+  const ph=Math.min(canvas.height*0.92, Math.max(440, 390*DPR));
+  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2, pad=pw*0.03;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#2e1d10'; ctx.strokeStyle='#7a4a1e'; ctx.lineWidth=Math.max(3,DPR*2);
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,18); ctx.fill(); ctx.stroke();
+  const headH=Math.max(42,40*DPR);
+  const cs=Math.max(22,24*DPR), closeBtn={ x:px+pw-pad-cs, y:py+pad*0.8, w:cs, h:cs };
+  ctx.strokeStyle='#cfae7a'; ctx.lineWidth=Math.max(2.5,DPR*2);
+  ctx.beginPath(); ctx.moveTo(closeBtn.x+4,closeBtn.y+4); ctx.lineTo(closeBtn.x+cs-4,closeBtn.y+cs-4);
+  ctx.moveTo(closeBtn.x+cs-4,closeBtn.y+4); ctx.lineTo(closeBtn.x+4,closeBtn.y+cs-4); ctx.stroke();
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(16,15*DPR))+'px system-ui, sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText('Trading with '+partnerName(trade.pid)+(trade.joined?'':' — waiting for them to join…'), px+pad, py+headH*0.6);
+  const colW=(pw-pad*4)/3, c1=px+pad, c2=c1+colW+pad, c3=c2+colW+pad;
+  const topY=py+headH+pad*0.5, botY=py+ph-Math.max(56,50*DPR);
+  const rowh=Math.max(21,19*DPR);
+  ctx.font='bold '+Math.round(Math.max(12,11.5*DPR))+'px system-ui, sans-serif';
+  ctx.fillStyle='#c9b391';
+  ctx.fillText('YOUR PACK — tap to offer', c1, topY);
+  ctx.fillText('YOU GIVE — tap to take back', c2, topY);
+  ctx.fillText('YOU GET', c3, topY);
+  // column boxes
+  for(const cx0 of [c1,c2,c3]){ ctx.fillStyle='rgba(0,0,0,.22)';
+    ctx.beginPath(); ctx.roundRect(cx0-pad*0.35, topY+rowh*0.5, colW+pad*0.7, botY-topY-rowh*0.6, 8); ctx.fill(); }
+  const invRows=[], giveRows=[];
+  let y=topY+rowh*1.35;
+  ctx.font=Math.round(Math.max(12,11.5*DPR))+'px system-ui, sans-serif';
+  for(const k of TRADEABLE){ const av=tradeAvail(k); if(av<=0) continue;
+    if(y>botY-rowh*0.4) break;
+    ctx.fillStyle = k==='guld' ? '#ffd44d' : '#e8dcc0';
+    ctx.fillText(TRADE_NAMES[k]+'  ×'+av+(k==='guld'?'  (+10)':''), c1, y);
+    invRows.push({k, box:{x:c1-pad*0.3, y:y-rowh*0.5, w:colW+pad*0.5, h:rowh}});
+    y+=rowh; }
+  if(!invRows.length){ ctx.fillStyle='#8f7f66'; ctx.fillText('Nothing to offer', c1, topY+rowh*1.35); }
+  y=topY+rowh*1.35;
+  for(const k in trade.mine){ if(y>botY-rowh*0.4) break;
+    ctx.fillStyle = k==='guld' ? '#ffd44d' : '#e8dcc0';
+    ctx.fillText(TRADE_NAMES[k]+'  ×'+trade.mine[k], c2, y);
+    giveRows.push({k, box:{x:c2-pad*0.3, y:y-rowh*0.5, w:colW+pad*0.5, h:rowh}});
+    y+=rowh; }
+  y=topY+rowh*1.35;
+  for(const k in trade.theirs){ if(y>botY-rowh*0.4) break;
+    ctx.fillStyle = k==='guld' ? '#ffd44d' : '#8fd07a';
+    ctx.fillText(TRADE_NAMES[k]+'  ×'+trade.theirs[k], c3, y);
+    y+=rowh; }
+  // footer: status + accept lights + the TRADE button
+  const bw=Math.max(120,108*DPR), bh=Math.max(34,30*DPR);
+  const tradeBtn={ x:px+pw-pad-bw, y:py+ph-pad-bh, w:bw, h:bh };
+  ctx.fillStyle = trade.myAcc ? '#2e5d2e' : '#3f7d3f';
+  ctx.beginPath(); ctx.roundRect(tradeBtn.x,tradeBtn.y,tradeBtn.w,tradeBtn.h,9); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(bh*0.42)+'px system-ui, sans-serif';
+  ctx.textAlign='center'; ctx.fillText(trade.myAcc?'ACCEPTED ✓':'TRADE', tradeBtn.x+bw/2, tradeBtn.y+bh*0.55);
+  ctx.textAlign='left'; ctx.font='bold '+Math.round(Math.max(12,11*DPR))+'px system-ui, sans-serif';
+  ctx.fillStyle = trade.theirAcc ? '#8fd07a' : '#8f7f66';
+  ctx.fillText(trade.theirAcc ? 'They accepted ✓' : 'They have not accepted', px+pad, py+ph-pad-bh*0.4);
+  if(trade.msgT>0 && trade.msg){ ctx.fillStyle='#e08a8a';
+    ctx.fillText(trade.msg, px+pad, py+ph-pad-bh*1.35); }
+  ctx.restore();
+  _trL={ panel:{x:px,y:py,w:pw,h:ph}, closeBtn, tradeBtn, invRows, giveRows };
+}
+function tradeUIClick(cx,cy){
+  const L=_trL; if(!L){ return; }
+  const inside=(b)=> cx>=b.x&&cx<=b.x+b.w&&cy>=b.y&&cy<=b.y+b.h;
+  if(inside(L.closeBtn)){ netSendTrade({op:'close'}); tradeReset(); return; }
+  if(!inside(L.panel)) return;                       // taps outside are ignored — closing is deliberate (the X)
+  if(inside(L.tradeBtn)){ tradeAccept(); return; }
+  for(const r2 of L.invRows){ if(inside(r2.box)){ tradeOfferAdd(r2.k); return; } }
+  for(const r2 of L.giveRows){ if(inside(r2.box)){ tradeOfferRemove(r2.k); return; } }
+}
+
 function onTapWorld(wx,wy){
+  const rp=pickRemotePlayer(wx,wy);                 // a fellow player outranks everything — walk over to trade
+  if(rp){ player.tradeTarget=rp.id|0; player.attack=null; player.chopTree=null; player.chopping=false;
+    player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null; player.propTarget=null;
+    pathToCell(cellOf(rp.px), cellOf(rp.py)+1); return; }
   const cx=Math.max(0,Math.min(GRID-1,Math.floor(wx/CELL))), cy=Math.max(0,Math.min(GRID-1,Math.floor(wy/CELL)));
   if(player.tool==='hoe'){ tillOrUntill(cx,cy); return; }        // till / untill a crop plot
   if(player.tool==='seeds'){ plantSeeds(cx,cy); return; }        // sow wheat on a plot
@@ -4151,6 +4358,7 @@ function draw(){
     drawInventory();        // wood count, left (only when you have wood)
     drawInvButton();        // satchel, bottom-right → opens the inventory screen
     drawBrainButton();      // the Mind, above the satchel → opens the brain grid
+    drawTradeIcon();        // the handshake over a would-be trade partner
     drawBuildGhost();       // ground-select: the building's placement ghost
   }
   drawHearts();             // player HP, top-left
@@ -4167,6 +4375,7 @@ function draw(){
     drawBuildUI();          // the building catalog
     drawSiteUI();           // a build site's progress panel
     drawCardUI();           // the Mind — the brain grid of training cards
+    drawTradeUI();          // the trade table, when bartering with another player
   }
   // drawZoomHUD();         // zoom read-out retired — the 5×–10× band is settled (re-enable to tune again)
 }
@@ -5623,6 +5832,7 @@ function loop(ts){
   if(net.mode==='guest'){                        // co-op guest: the world is streamed from the host; only run the local hero
     updateHunger(dt);                            // the hunger clock, regen and digestion (§4d)
     updateCards(dt);                             // training-in countdowns
+    tradeTick(dt);                               // invites, distance checks, message fade
     if(shop.msgT>0) shop.msgT-=dt;
     if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }
     updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt);
@@ -5641,6 +5851,7 @@ function loop(ts){
   }
   updateHunger(dt);                              // the hunger clock, regen and digestion (§4d)
   updateCards(dt);                               // training-in countdowns
+  if(typeof net!=='undefined' && net.mode!=='off') tradeTick(dt);   // trading, when others share the world
   if(shop.msgT>0) shop.msgT-=dt;                                                                 // fade the shop message
   if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }  // deselect a tool that's no longer owned
   updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt); updateBushes(dt);
@@ -5733,6 +5944,7 @@ function endPointer(ev){
       else if(altarUI.open){ altarClick(c.x, c.y); } // altar rites capture the tap
       else if(invUI.open){ invUIClick(c.x, c.y); }   // inventory screen captures the tap
       else if(cardUI.open){ cardUIClick(c.x, c.y); } // the Mind captures the tap
+      else if(trade.open){ tradeUIClick(c.x, c.y); } // the trade table captures the tap
       else {
         let hitTool=false;
         if(mmButtonTap(c.x, c.y)) hitTool=true;                                                      // minimap +/- buttons
@@ -5740,6 +5952,8 @@ function endPointer(ev){
         if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
         const BB=brainButtonBox();
         if(!hitTool && c.x>=BB.x&&c.x<=BB.x+BB.w&&c.y>=BB.y&&c.y<=BB.y+BB.h){ cardUI.open=true; cardUI.pulse=0; hitTool=true; }   // the Mind → brain grid
+        if(!hitTool && _trIconBox && c.x>=_trIconBox.x&&c.x<=_trIconBox.x+_trIconBox.w&&c.y>=_trIconBox.y&&c.y<=_trIconBox.y+_trIconBox.h){
+          openTradeWith(_trIconBox.pid); hitTool=true; }                                              // the handshake → open the trade
         for(const b of toolButtons()){ if(hitTool) break; if(c.x>=b.x&&c.x<=b.x+b.w&&c.y>=b.y&&c.y<=b.y+b.h){
           const wasBuilding=!!buildMode; buildMode=null; _buildConfirmBox=null;                       // picking ANY action icon leaves ground-select
           if(b.key==='build'){ if(!wasBuilding) buildUI.open=!buildUI.open; siteUI.open=false; hitTool=true; break; }
@@ -6377,6 +6591,11 @@ function netOnData(m, fromClient){
     if(f && f.kind==='deer' && f.cr.dead && !f.cr.gone && (f.cr.deadT||0)<DEER_FRESH_T) f.cr.deadT=DEER_FRESH_T; } }
   else if(m.t==='lootg'){ if(net.mode==='host'){ const f=findByNid(m.nid);                      // guest took an enemy's soul → mark the body spent here too
     if(f && f.kind==='goblin' && f.cr.dead && !f.cr.gone && !f.cr.looted){ f.cr.looted=true; f.cr.deadT=Math.max(f.cr.deadT||0,60); } } }
+  else if(m.t==='tr'){                                                                          // player-to-player trading, routed by id
+    if(net.mode==='host' && fromClient){
+      if((m.to|0)===(net.myId|0) && !DEDICATED) handleTrade(m);                                 // the host is the trade partner
+      else { for(const c of net.clients){ if(c.open && (c.p.id|0)===(m.to|0)){ try{ c.conn.send(m); }catch(e){} break; } } }
+    } else handleTrade(m); }
   else if(m.t==='tfell'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);           // another player's tree comes down HERE too
     if(t) fellTree(t, +m.fx||((t.x+1.5)*CELL), true); }
   else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
