@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · o';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · p';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1829,14 +1829,20 @@ function completeSite(s){
   const i=world.sites.indexOf(s); if(i>=0) world.sites.splice(i,1);
   if(!DEDICATED) addFloat('The '+BUILDINGS[s.kind].name+' is built!', (x0+1.5)*CELL, y0*CELL, '#ffd44d');
 }
+let _locSiteSeq=0;
 function confirmBuildSite(){
   const bm=buildMode; if(!bm || bm.tx==null || !buildFootprintFree(bm.kind, bm.tx, bm.ty)) return;
-  if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'siteNew', map:mapMode, kind:bm.kind, tx:bm.tx, ty:bm.ty});   // host stakes it; the next extras snap shows it
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected){
+    netSend({t:'siteNew', map:mapMode, kind:bm.kind, tx:bm.tx, ty:bm.ty});   // the host stakes the real one…
+    world.sites.push({ id:-(++_locSiteSeq), kind:bm.kind, tx:bm.tx, ty:bm.ty,   // …but the stake shows HERE instantly
+      need:BUILDINGS[bm.kind].cost, have:0, loc:true });                     // the next snap swaps in the host's copy (or removes a refused one)
+  }
   else addSite(bm.kind, bm.tx, bm.ty);
   buildMode=null; _buildConfirmBox=null;
 }
 function siteContribute(){                          // the Add Wood button on a site's panel
   const s=siteById(siteUI.id); if(!s){ siteUI.open=false; return; }
+  if(s.loc){ shop.msg='Staking the site…'; shop.msgT=1.5; return; }         // a breath while the host confirms — no wood is lost
   const dTiles=Math.hypot(player.px/CELL-(s.tx*TILE+BUILDINGS[s.kind].tiles*TILE/2), player.py/CELL-(s.ty*TILE+BUILDINGS[s.kind].tiles*TILE/2));
   if(dTiles>5){ shop.msg='Walk closer to the site'; shop.msgT=2; return; }
   const n=Math.min(5, s.need-s.have, player.wood); if(n<=0){ shop.msg=player.wood<=0?'You have no wood':''; shop.msgT=2; return; }
@@ -6206,7 +6212,13 @@ function netApplySnap(m){                              // world portion of a sna
     g.hp=s.h; g.looted=!!s.lo; g.st=s.st; g.swingT=s.sw; g.punchT=s.pu; g.castT=s.ca; g.hopAmt=s.ho; if(g.kind==='bigskel') g.big=true;
     g.srcKind=s.sk||null; g.antlers=!!s.sa; g.fawn=!!s.sf; }
   if(m.gobFull){ for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); } }
-  if(m.sites){ world.sites=m.sites.map(a2=>({id:a2[0],kind:a2[1],tx:a2[2],ty:a2[3],need:a2[4],have:a2[5]}));
+  if(m.sites){ const held=siteUI.open?siteById(siteUI.id):null;              // remember an open provisional panel
+    const locs=(world.sites||[]).filter(s=>s.loc);                           // our optimistic stakes
+    world.sites=m.sites.map(a2=>({id:a2[0],kind:a2[1],tx:a2[2],ty:a2[3],need:a2[4],have:a2[5]}));
+    for(const L of locs){ const match=world.sites.find(s=>s.kind===L.kind&&s.tx===L.tx&&s.ty===L.ty);
+      if(match){ if(held===L) siteUI.id=match.id; }                          // the host staked it — follow its id
+      else { L.snapMiss=(L.snapMiss||0)+1;                                   // a snap already in flight may predate the stake…
+        if(L.snapMiss<3) world.sites.push(L); } }                            // …keep showing ours a few beats, then accept the refusal
     if(siteUI.open && !siteById(siteUI.id)) siteUI.open=false; }
   if(m.brg){ for(const b of m.brg){ if(!(world.builtBridges||[]).some(x2=>x2[0]===b[0]&&x2[1]===b[1])) placeBridgeTileAt(b[0], b[1], b[2]); } }
   if(m.bld){ const [bS,bSt,bBu,bAr]=m.bld;
