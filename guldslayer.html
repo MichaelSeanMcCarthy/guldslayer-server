@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · f';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · g';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -169,7 +169,7 @@ function recenter(){
    terrain[i]: 0 open · 1 tree · 2 deep water · 3 shallow water · 4 mid water.
    Walkable = open or shallow.  Blocked = tree, mid water, deep water.           */
 const world = { terrain:new Uint8Array(GRID*GRID), moist:new Uint8Array(GRID*GRID),
-                trees:[], bushes:[], cattails:[], water:[], moistCells:[], moistRing:[], stumps:[], bushRespawn:[], campDirt:[], shopDirt:[], shopProps:[], shopBlock:new Set(), crops:new Map(), bridge:[], bridgeSet:new Set() };
+                trees:[], bushes:[], cattails:[], water:[], moistCells:[], moistRing:[], stumps:[], bushRespawn:[], campDirt:[], shopDirt:[], shopProps:[], shopBlock:new Set(), crops:new Map(), bridge:[], bridgeSet:new Set(), sites:[] };
 const gi = (x,y)=> y*GRID+x;
 const inGrid = (x,y)=> x>=0&&y>=0&&x<GRID&&y<GRID;
 // the weapon shop: a 4x4 blocked building near the map centre (placed in generateWorld)
@@ -324,10 +324,9 @@ function generateWorld(){
   world.trees=trees; world.bushes=bushes; world.cattails=cattails; world.water=water;
   world.creekMinX=creekMinX; world.creekMaxX=creekMaxX; world.bushRespawn=[]; world.stumps=[];
   world.crops=new Map();
-  placeShop();
-  placeStall();
-  placeButcher();
-  placeArmorShop();
+  // the crafting shops are BUILT by players now — the meadow starts empty
+  world.sites=[]; world.shopDirt=[]; world.shopProps=[]; world.shopBlock=new Set(); world._dirtTiles=new Set();
+  shop.placed=false; stall.placed=false; butcher.placed=false; armorShop.placed=false;
   placeBridge();
   buildRoad();
   placeHenge();
@@ -474,7 +473,7 @@ function generateDungeon(){
   const rng=mulberry32((worldSeed ^ 0x5bd1e995)>>>0);
   world.terrain=new Uint8Array(GRID*GRID).fill(1);        // solid rock everywhere…
   world.moist=new Uint8Array(GRID*GRID);
-  world.trees=[]; world.bushes=[]; world.cattails=[]; world.water=[]; world.moistCells=[]; world.moistRing=[];
+  world.trees=[]; world.bushes=[]; world.cattails=[]; world.water=[]; world.moistCells=[]; world.moistRing=[]; world.sites=[];
   world.stumps=[]; world.bushRespawn=[]; world.campDirt=[]; world.shopDirt=[]; world.pathDirt=[];
   world.shopProps=[]; world.shopBlock=new Set(); world.crops=new Map(); world.bridge=[]; world.bridgeSet=new Set();
   world.caveBlock=new Set(); world.hengeBlock=new Set(); world.caveFloor=[]; world.caveRocks=[];
@@ -608,14 +607,12 @@ function placeHenge(){
 // through the village so it fronts the doors — and the verges are kept clear: no tree or bush within 1 tile.
 function buildRoad(){
   world.pathDirt=[]; const TG=GRID/TILE, ps=new Set();                    // ps holds road TILE keys
-  if(!world.bridge.length || !shop.placed) return;
+  if(!world.bridge.length) return;
   const rng=mulberry32((worldSeed ^ 0x517cc1b7)>>>0);                     // the road's own seeded wobble
   const tKey=(tx,ty)=> ty*TG+tx;
   const maxX=Math.max(...world.bridge.map(b=>b.x));                       // east end of the bridge
   const rows=world.bridge.filter(b=>b.x===maxX).map(b=>b.y);
-  const frontY=Math.max(shop.y+shop.h, stall.placed?stall.y+stall.h:0, armorShop.placed?armorShop.y+armorShop.h:0)+1;   // just past every door row
-  const frontTY=Math.floor(frontY/TILE);
-  const villTX0=Math.floor((shop.x-2)/TILE), villTX1=Math.floor((((armorShop.placed?armorShop.x+armorShop.w:shop.x+shop.w))+1)/TILE);   // the village stretch stays straight
+  const frontTY=Math.floor(Math.min(...rows)/TILE);                       // hold loosely to the bridge's line — no village to straighten for
   const carve=(tx,ty)=>{                                                  // pave one whole 3m tile
     if(tx<0||ty<0||tx>=TG||ty>=TG || ps.has(tKey(tx,ty))) return;
     const x0=tx*TILE, y0=ty*TILE;
@@ -630,12 +627,9 @@ function buildRoad(){
   let ty=Math.floor(Math.min(...rows)/TILE);                              // pick the trail up right off the bridge planks
   for(let tx=Math.floor((maxX+1)/TILE); tx<TG; tx++){
     const pty=ty;
-    if(tx>=villTX0 && tx<=villTX1){ if(ty<frontTY) ty++; else if(ty>frontTY) ty--; }   // ease onto the storefront row and hold it
-    else {
-      if(rng()<0.34) ty += (rng()<0.5?-1:1);                              // wander a tile…
-      if(ty<frontTY-2) ty++; else if(ty>frontTY+2) ty--;                  // …but stay loosely along the same line of travel
-      ty=Math.max(1, Math.min(TG-2, ty));
-    }
+    if(rng()<0.34) ty += (rng()<0.5?-1:1);                                // wander a tile…
+    if(ty<frontTY-2) ty++; else if(ty>frontTY+2) ty--;                    // …but stay loosely along the same line of travel
+    ty=Math.max(1, Math.min(TG-2, ty));
     if(ty!==pty) carve(tx, pty);                                          // fill the bend so turns read as steps, not gaps
     carve(tx, ty);
   }
@@ -671,22 +665,25 @@ function pushDirtLot(r){                              // dirt ground tile by til
   }
 }
 // a small 2x2 stall selling wheat seeds, a few tiles east of the weapon shop — on its own dirt lot
-function placeButcher(){                              // the butcher's stall sits 6 tiles in front of (south of) the seed stall
-  const w=2, h=2, btx=stall.x, bty=Math.min(GRID-h-2, stall.y+stall.h+6);
+function placeButcherAt(btx, bty){                    // the butcher's stall, raised wherever its site stood
+  const w=2, h=2;
   butcher.x=btx; butcher.y=bty; butcher.w=w; butcher.h=h; butcher.doorX=btx; butcher.placed=true;
-  clearLot(lotRect(btx-1, bty-1, btx+w, bty+h+1));
+  clearLot(lotRect(btx, bty, btx+w, bty+h));
+  mmCanvas=null;                                      // repaint the minimap with the new building
 }
-function placeStall(){
-  const w=2, h=2, stx=shop.x+shop.w+2, sty=shop.y+1;
+function placeStallAt(stx, sty){
+  const w=2, h=2;
   stall.x=stx; stall.y=sty; stall.w=w; stall.h=h; stall.doorX=stx; stall.placed=true;
-  const r=lotRect(stx-1, sty-1, stx+w, sty+h+1);
+  const r=lotRect(stx, sty, stx+w, sty+h);
   clearLot(r); pushDirtLot(r);
+  mmCanvas=null;
 }
-function placeArmorShop(){                            // a 4x4 armor shop east of the seed stall
-  const w=4, h=4, ax=Math.min(GRID-w-3, stall.x+stall.w+3), ay=shop.y;
+function placeArmorShopAt(ax, ay){                    // the 4x4 armor shop, centred in its 2x2 claimed tiles
+  const w=4, h=4;
   armorShop.x=ax; armorShop.y=ay; armorShop.w=w; armorShop.h=h; armorShop.doorX=ax+Math.floor(w/2); armorShop.placed=true;
-  const r=lotRect(ax-2, ay-2, ax+w+1, ay+h+2);
+  const r=lotRect(ax-1, ay-1, ax+w, ay+h);
   clearLot(r); pushDirtLot(r);
+  mmCanvas=null;
 }
 // a wooden plank bridge spanning the creek near the vertical centre of the map
 function placeBridge(){
@@ -724,14 +721,14 @@ function placeBridge(){
   }
 }
 // carve out a clear 4x4 plot near the centre for the weapon shop, on a dirt lot with barrels & crates
-function placeShop(){
+function placeShopAt(sx, sy){
   const w=4, h=4;
-  const sx=Math.floor(GRID/2)-2, sy=Math.floor(GRID/2)-5;   // footprint sits just north of the player's spawn
   shop.x=sx; shop.y=sy; shop.w=w; shop.h=h; shop.doorX=sx+Math.floor(w/2); shop.placed=true; shop.open=false; shop.msg=''; shop.msgT=0;
-  world.shopDirt=[]; world.shopProps=[]; world.shopBlock=new Set(); world._dirtTiles=new Set();
-  // clear + dirt the whole lot in 3m tiles (footprint + margin snapped to tile boundaries)
-  const r=lotRect(sx-2, sy-2, sx+w+1, sy+h+2);
+  if(!world.shopDirt) world.shopDirt=[]; if(!world.shopProps){ world.shopProps=[]; world.shopBlock=new Set(); }
+  // clear + dirt the whole lot in 3m tiles (the site's claimed tiles)
+  const r=lotRect(sx-1, sy-1, sx+w, sy+h);
   clearLot(r); pushDirtLot(r);
+  mmCanvas=null;
   // barrels dressed around the building (off the door approach), on solid tiles
   const door=shop.doorX, ay=sy+h;                              // door-approach row
   const propSpots=[
@@ -1519,6 +1516,74 @@ const BUTCHER_ITEMS = [
 ];
 const shopUI = { open:false, title:'Weapon Shop', items:SHOP_ITEMS };
 function openShopUI(title, items){ shopUI.open=true; shopUI.title=title; shopUI.items=items; shop.msg=''; shop.msgT=0; }
+/* ============================================================================
+   BUILDING — the crafting shops are no longer pre-placed: players BUILD them.
+   Build button (toolbar) -> catalog UI -> ground-select ghost on the 3m tile
+   grid (green = clear, red = blocked) -> confirm -> a shared BUILD SITE that
+   any player can feed wood until the building completes for everyone.
+   ========================================================================== */
+const BUILDINGS = {
+  shop:    { name:'Weapon Shop', tiles:2, cost:30, sum:'Sells clubs, long bows and arrows.' },
+  armor:   { name:'Armor Shop',  tiles:2, cost:30, sum:'Sells leather armor, chain mail and packs.' },
+  stall:   { name:'Seed Stall',  tiles:1, cost:15, sum:'Sells wheat seeds and the garden hoe.' },
+  butcher: { name:'The Butcher', tiles:1, cost:15, sum:'Smokes jerky and cooks meals from meat and wheat.' },
+};
+const buildUI = { open:false };
+const siteUI  = { open:false, id:null };
+let buildMode = null;                 // {kind, tx, ty} — tx/ty in TILES; null tx = nothing hovered yet
+let _buildConfirmBox = null;          // screen-space "Build here" button while the ghost is green
+let _siteSeq = 1;
+function buildingPlaced(kind){ return kind==='shop'?shop.placed : kind==='armor'?armorShop.placed : kind==='stall'?stall.placed : butcher.placed; }
+function siteById(id){ return (world.sites||[]).find(s=>s.id===id); }
+function siteAt(cx,cy){ for(const s of (world.sites||[])){ const n=BUILDINGS[s.kind].tiles*TILE;
+  if(cx>=s.tx*TILE && cx<s.tx*TILE+n && cy>=s.ty*TILE && cy<s.ty*TILE+n) return s; } return null; }
+function buildFootprintFree(kind, tx, ty){          // every cell of the claimed tiles must be open ground
+  const B=BUILDINGS[kind]; if(!B) return false;
+  const n=B.tiles*TILE, x0=tx*TILE, y0=ty*TILE;
+  if(tx<0||ty<0||x0+n>GRID||y0+n>GRID) return false;
+  for(let dy=0;dy<n;dy++) for(let dx=0;dx<n;dx++){ const x=x0+dx, y=y0+dy;
+    if(isBlocked(x,y) || world.terrain[gi(x,y)]!==0 || isCrop(x,y)) return false;
+    if(world.bridgeSet && world.bridgeSet.has(gi(x,y))) return false; }
+  for(const s of (world.sites||[])){ const sn2=BUILDINGS[s.kind].tiles;   // don't overlap another site
+    if(!(tx+B.tiles<=s.tx || s.tx+sn2<=tx || ty+B.tiles<=s.ty || s.ty+sn2<=ty)) return false; }
+  return true;
+}
+function addSite(kind, tx, ty){                     // authoritative (host / solo)
+  if(!BUILDINGS[kind] || buildingPlaced(kind)) return null;
+  if((world.sites||[]).some(s=>s.kind===kind)) return null;      // one site per building kind
+  if(!buildFootprintFree(kind, tx, ty)) return null;
+  const s={ id:_siteSeq++, kind, tx, ty, need:BUILDINGS[kind].cost, have:0 };
+  world.sites.push(s); return s;
+}
+function siteAddWood(s, n){                         // authoritative
+  if(!s || n<=0) return; s.have=Math.min(s.need, s.have+n);
+  if(s.have>=s.need) completeSite(s);
+}
+function completeSite(s){
+  const x0=s.tx*TILE, y0=s.ty*TILE;
+  if(s.kind==='shop') placeShopAt(x0+1, y0+1);                   // 4x4 building centred in its 2x2 claimed tiles
+  else if(s.kind==='armor') placeArmorShopAt(x0+1, y0+1);
+  else if(s.kind==='stall') placeStallAt(x0, y0);                // 2x2 stall in its single tile
+  else if(s.kind==='butcher') placeButcherAt(x0, y0);
+  const i=world.sites.indexOf(s); if(i>=0) world.sites.splice(i,1);
+  if(!DEDICATED) addFloat('The '+BUILDINGS[s.kind].name+' is built!', (x0+1.5)*CELL, y0*CELL, '#ffd44d');
+}
+function confirmBuildSite(){
+  const bm=buildMode; if(!bm || bm.tx==null || !buildFootprintFree(bm.kind, bm.tx, bm.ty)) return;
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'siteNew', map:mapMode, kind:bm.kind, tx:bm.tx, ty:bm.ty});   // host stakes it; the next extras snap shows it
+  else addSite(bm.kind, bm.tx, bm.ty);
+  buildMode=null; _buildConfirmBox=null;
+}
+function siteContribute(){                          // the Add Wood button on a site's panel
+  const s=siteById(siteUI.id); if(!s){ siteUI.open=false; return; }
+  const dTiles=Math.hypot(player.px/CELL-(s.tx*TILE+BUILDINGS[s.kind].tiles*TILE/2), player.py/CELL-(s.ty*TILE+BUILDINGS[s.kind].tiles*TILE/2));
+  if(dTiles>5){ shop.msg='Walk closer to the site'; shop.msgT=2; return; }
+  const n=Math.min(5, s.need-s.have, player.wood); if(n<=0){ shop.msg=player.wood<=0?'You have no wood':''; shop.msgT=2; return; }
+  player.wood-=n; addFloat('-'+n+' wood', player.px, player.py-CELL*1.7, PAL.plankHi);
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected){ s.have=Math.min(s.need, s.have+n); netSend({t:'siteWood', map:mapMode, i:s.id, n}); }
+  else siteAddWood(s, n);
+  if(!siteById(siteUI.id)) siteUI.open=false;       // it finished under your hammer
+}
 function craftItem(it){                             // buy an item, paid in its currency (wood by default, skins for armor)
   if(it.has && it.has()){ shop.msg='Already owned'; shop.msgT=2.5; return; }   // single-instance items
   if(ITEM_LBS[it.key]!=null && !(player[it.key]>0) && packTypesUsed()+1>packSlots()){   // a NEW kind of item needs a free pack slot
@@ -2035,6 +2100,9 @@ function onTapWorld(wx,wy){
   if(mapMode==='dungeon' && cx>=dungeon.forge.x-1 && cx<=dungeon.forge.x+2 && Math.abs(cy-dungeon.forge.y)<=1){   // tapped the forge
     player.goForge=true; player.attack=null; player.propTarget=null; player.soulTarget=null; player.chopTree=null; player.chopping=false; player.mineRock=null;
     pathToCell(dungeon.forge.x, dungeon.forge.y+1); return; }
+  const site2=siteAt(cx,cy);
+  if(site2){ siteUI.open=true; siteUI.id=site2.id; buildUI.open=false; shop.msg=''; shop.msgT=0;
+    pathToCell(site2.tx*TILE+1, site2.ty*TILE+BUILDINGS[site2.kind].tiles*TILE); return; }   // tapped a build site — walk over, panel opens
   if(isShopCell(cx,cy)){ approachShop(); return; } // tapped the shop → head to its door
   if(isStallCell(cx,cy)){ approachStall(); return; } // tapped the seed stall
   if(isButcherCell(cx,cy)){ approachButcher(); return; } // tapped the butcher's stall
@@ -3643,6 +3711,7 @@ function draw(){
   // upright sprites — painter's algorithm by depth (world y), back to front
   const items=[];
   if(shop.placed) items.push({wx:(shop.x+shop.w/2)*CELL, wy:(shop.y+shop.h)*CELL, kind:9});   // shop billboard, anchored at its front wall
+  for(const s2 of (world.sites||[])) items.push({wx:(s2.tx*TILE+BUILDINGS[s2.kind].tiles*TILE/2)*CELL, wy:(s2.ty*TILE+BUILDINGS[s2.kind].tiles*TILE)*CELL, kind:29, ref:s2});   // build sites
   if(stall.placed) items.push({wx:(stall.x+stall.w/2)*CELL, wy:(stall.y+stall.h)*CELL, kind:13});   // seed stall
   if(butcher.placed) items.push({wx:(butcher.x+butcher.w/2)*CELL, wy:(butcher.y+butcher.h)*CELL, kind:28});   // butcher's stall
   if(armorShop.placed) items.push({wx:(armorShop.x+armorShop.w/2)*CELL, wy:(armorShop.y+armorShop.h)*CELL, kind:14});   // armor shop
@@ -3726,6 +3795,7 @@ function draw(){
     else if(it.kind===9) drawShop(s);
     else if(it.kind===12) drawWheat(it.cell);
     else if(it.kind===13) drawStall(s);
+    else if(it.kind===29) drawSite(it.ref);
     else if(it.kind===28) drawButcher(s);
     else if(it.kind===14) drawArmorShop(s);
     else if(it.kind===10) drawTurtle(s, it.ref);
@@ -3769,9 +3839,12 @@ function draw(){
     drawToolBar();          // tool buttons, bottom-centre
     drawInventory();        // wood count, left (only when you have wood)
     drawInvButton();        // satchel, bottom-right → opens the inventory screen
+    drawBuildGhost();       // ground-select: the building's placement ghost
     drawShopUI();           // crafting modal, when the shop is open
     drawAltarUI();          // altar rites, when communing at the henge
     drawInvUI();            // inventory screen, when open
+    drawBuildUI();          // the building catalog
+    drawSiteUI();           // a build site's progress panel
   }
   drawHearts();             // player HP, top-left
   drawStamina();            // stamina meter, under the hearts
@@ -4257,6 +4330,169 @@ function drawWheatSymbol(cx, cy, s){
     tri([hx,yy-s*0.04],[hx+s*0.2,yy+s*0.02],[hx+s*0.02,yy+s*0.12], PAL.wheatHead); }
   tri([hx-s*0.06,hy-s*0.16],[hx+s*0.06,hy-s*0.16],[hx,hy-s*0.02], PAL.wheatHead);   // tip
 }
+function buildUILayout(){
+  const kinds=Object.keys(BUILDINGS);
+  const pw=Math.min(canvas.width*0.94, Math.max(560, 470*DPR));
+  const headH=Math.max(52,50*DPR), rowH=Math.max(64,56*DPR), footH=Math.max(40,36*DPR);
+  const ph=headH+kinds.length*rowH+footH;
+  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2, pad=pw*0.05;
+  const cs=Math.max(22,24*DPR);
+  const closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.55, w:cs, h:cs };
+  const rows=kinds.map((k,i)=>{ const y=py+headH+i*rowH, bw=pw*0.2, bh=rowH*0.52;
+    return { kind:k, y, h:rowH, btn:{ x:px+pw-pad-bw, y:y+(rowH-bh)/2, w:bw, h:bh } }; });
+  return {px,py,pw,ph,pad,headH,rowH,footH,closeBtn,rows};
+}
+function drawBuildUI(){
+  if(!buildUI.open) return;
+  const L=buildUILayout();
+  ctx.save();
+  ctx.globalAlpha=0.55; rect(0,0,canvas.width,canvas.height, PAL.panelBg); ctx.globalAlpha=1;
+  rect(L.px, L.py, L.pw, L.ph, PAL.panelBg);
+  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(L.px,L.py,L.pw,L.ph);
+  const lx=L.px+L.pad;
+  ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.font='bold '+Math.round(Math.max(18, L.headH*0.4))+'px system-ui, sans-serif';
+  ctx.fillText('Build', lx, L.py+L.headH*0.4);
+  ctx.fillStyle=PAL.shopWall; ctx.font=Math.round(Math.max(12, L.headH*0.24))+'px system-ui, sans-serif';
+  ctx.fillText('You have '+player.wood+' wood \u00b7 anyone can add wood to a site', lx, L.py+L.headH*0.78);
+  for(const row of L.rows){
+    const B=BUILDINGS[row.kind], midY=row.y+row.h*0.5;
+    const placed=buildingPlaced(row.kind), sited=(world.sites||[]).some(s=>s.kind===row.kind);
+    ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.font='bold '+Math.round(Math.max(14, row.h*0.28))+'px system-ui, sans-serif';
+    ctx.fillText(B.name, lx, midY-row.h*0.22);
+    ctx.font=Math.round(Math.max(11, row.h*0.21))+'px system-ui, sans-serif';
+    ctx.fillStyle=PAL.shopWall;
+    ctx.fillText(B.sum, lx, midY+row.h*0.05);
+    ctx.fillStyle='#c9a06a';
+    ctx.fillText(B.cost+' wood \u00b7 '+(B.tiles===1?'1 tile':B.tiles+'\u00d7'+B.tiles+' tiles'), lx, midY+row.h*0.3);
+    const Bb=row.btn, can=!placed && !sited;
+    rect(Bb.x,Bb.y,Bb.w,Bb.h, can?'#3e7d3c':PAL.shopWallSh);
+    ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.strokeRect(Bb.x,Bb.y,Bb.w,Bb.h);
+    ctx.fillStyle=can?PAL.panelHi:PAL.dirt; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font='bold '+Math.round(Math.max(12,Bb.h*0.38))+'px system-ui, sans-serif';
+    ctx.fillText(placed?'Built':sited?'In progress':'Build', Bb.x+Bb.w/2, Bb.y+Bb.h/2);
+  }
+  const C=L.closeBtn;
+  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(C.x,C.y,C.w,C.h);
+  ctx.beginPath(); ctx.moveTo(C.x+C.w*0.28,C.y+C.h*0.28); ctx.lineTo(C.x+C.w*0.72,C.y+C.h*0.72);
+  ctx.moveTo(C.x+C.w*0.72,C.y+C.h*0.28); ctx.lineTo(C.x+C.w*0.28,C.y+C.h*0.72); ctx.stroke();
+  ctx.restore();
+}
+function buildUIClick(cx,cy){
+  const L=buildUILayout(), inR=(r)=> cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
+  if(inR(L.closeBtn)){ buildUI.open=false; return; }
+  for(const row of L.rows){ if(inR(row.btn)){
+    if(buildingPlaced(row.kind) || (world.sites||[]).some(s=>s.kind===row.kind)) return;
+    buildUI.open=false; buildMode={kind:row.kind, tx:null, ty:null}; _buildConfirmBox=null; return; } }
+  if(cx<L.px||cx>L.px+L.pw||cy<L.py||cy>L.py+L.ph) buildUI.open=false;
+}
+function drawBuildGhost(){                          // ground-select: the building's ghost on the tile grid
+  _buildConfirmBox=null;
+  const bm=buildMode; if(!bm) return;
+  const u=CELL*cam.scale;
+  if(bm.tx==null){                                  // nothing hovered yet — a gentle prompt
+    ctx.save(); ctx.fillStyle='rgba(0,0,0,.55)'; const tw=Math.max(300, 280*DPR), th=Math.max(30,28*DPR);
+    rect(canvas.width/2-tw/2, Math.max(8,8*DPR), tw, th, 'rgba(0,0,0,.55)');
+    ctx.fillStyle='#f4e7cf'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font=Math.round(th*0.44)+'px system-ui, sans-serif';
+    ctx.fillText('Tap the ground to place the '+BUILDINGS[bm.kind].name, canvas.width/2, Math.max(8,8*DPR)+th/2);
+    ctx.restore(); return;
+  }
+  const B=BUILDINGS[bm.kind], n=B.tiles*TILE, x0=bm.tx*TILE, y0=bm.ty*TILE;
+  const ok=buildFootprintFree(bm.kind, bm.tx, bm.ty);
+  const a=worldToScreen(x0*CELL, y0*CELL), b=worldToScreen((x0+n)*CELL, (y0+n)*CELL);
+  ctx.save();
+  rect(a.x, a.y, b.x-a.x, b.y-a.y, ok?'rgba(110,220,110,.28)':'rgba(225,70,55,.32)');
+  ctx.strokeStyle=ok?'rgba(110,220,110,.9)':'rgba(225,70,55,.9)'; ctx.lineWidth=Math.max(2,DPR*2);
+  ctx.strokeRect(a.x, a.y, b.x-a.x, b.y-a.y);
+  // a simple ghosted building: walls + roof, tinted by validity
+  ctx.globalAlpha=0.5;
+  const gw=(b.x-a.x)*0.72, gh=(b.y-a.y)*0.5, gx=(a.x+b.x)/2-gw/2, gy=b.y-(b.y-a.y)*0.12-gh;
+  rect(gx, gy, gw, gh, ok?'#9fdc9a':'#e08a80');
+  tri([gx-gw*0.08, gy],[gx+gw*1.08, gy],[gx+gw*0.5, gy-gh*0.75], ok?'#7cc276':'#c86a5e');
+  ctx.globalAlpha=1;
+  if(ok){                                            // the confirm button floats under the ghost
+    const bw2=Math.max(150, 130*DPR), bh2=Math.max(34,30*DPR);
+    const bx2=(a.x+b.x)/2-bw2/2, by2=Math.min(canvas.height-bh2-8, b.y+bh2*0.35);
+    rect(bx2, by2, bw2, bh2, '#3e7d3c');
+    ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*1.6); ctx.strokeRect(bx2,by2,bw2,bh2);
+    ctx.fillStyle='#f4e7cf'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font='bold '+Math.round(bh2*0.44)+'px system-ui, sans-serif';
+    ctx.fillText('Build here', bx2+bw2/2, by2+bh2/2);
+    _buildConfirmBox={x:bx2, y:by2, w:bw2, h:bh2};
+  }
+  ctx.restore();
+}
+function drawSite(s2){                              // a staked-out construction site with a progress sign
+  const B=BUILDINGS[s2.kind], n=B.tiles*TILE, x0=s2.tx*TILE, y0=s2.ty*TILE;
+  const a=worldToScreen(x0*CELL, y0*CELL), b=worldToScreen((x0+n)*CELL, (y0+n)*CELL);
+  rect(a.x, a.y, b.x-a.x, b.y-a.y, 'rgba(120,90,50,.28)');
+  ctx.strokeStyle='#8a5a34'; ctx.lineWidth=Math.max(2,DPR*1.6); ctx.strokeRect(a.x, a.y, b.x-a.x, b.y-a.y);
+  const u=CELL*cam.scale;
+  for(const [fx,fy] of [[x0+0.4,y0+0.4],[x0+n-0.4,y0+0.4],[x0+0.4,y0+n-0.4],[x0+n-0.4,y0+n-0.4]]){
+    const p=worldToScreen(fx*CELL, fy*CELL); rect(p.x-u*0.07, p.y-u*0.7, u*0.14, u*0.7, PAL.trunk); }   // corner stakes
+  const c2=worldToScreen((x0+n/2)*CELL, (y0+n*0.72)*CELL);
+  rect(c2.x-u*0.8, c2.y-u*0.1, u*1.6, u*0.2, '#c9a06a');           // planks laid ready
+  rect(c2.x-u*0.55, c2.y+u*0.14, u*1.1, u*0.18, '#b98d58');
+  const sgn=worldToScreen((x0+n/2)*CELL, (y0+n)*CELL);
+  rect(sgn.x-u*0.05, sgn.y-u*1.05, u*0.1, u*1.05, PAL.trunk);      // the sign
+  rect(sgn.x-u*0.95, sgn.y-u*1.78, u*1.9, u*0.75, '#e7d7b0');
+  ctx.fillStyle='#4a3a27'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font='bold '+Math.max(9, Math.round(u*0.26))+'px system-ui, sans-serif';
+  ctx.fillText(B.name, sgn.x, sgn.y-u*1.56);
+  ctx.fillText(s2.have+' / '+s2.need+' wood', sgn.x, sgn.y-u*1.22);
+}
+function siteUILayout(){
+  const pw=Math.min(canvas.width*0.9, Math.max(460, 400*DPR));
+  const ph=Math.max(190, 168*DPR);
+  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2, pad=pw*0.06;
+  const cs=Math.max(22,24*DPR);
+  const closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.6, w:cs, h:cs };
+  const bw=pw*0.34, bh=Math.max(38,34*DPR);
+  const addBtn={ x:px+pw/2-bw/2, y:py+ph-bh-pad*0.7, w:bw, h:bh };
+  return {px,py,pw,ph,pad,closeBtn,addBtn};
+}
+function drawSiteUI(){
+  if(!siteUI.open) return;
+  const s=siteById(siteUI.id); if(!s){ siteUI.open=false; return; }
+  const B=BUILDINGS[s.kind], L=siteUILayout();
+  ctx.save();
+  ctx.globalAlpha=0.45; rect(0,0,canvas.width,canvas.height, PAL.panelBg); ctx.globalAlpha=1;
+  rect(L.px, L.py, L.pw, L.ph, PAL.panelBg);
+  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(L.px,L.py,L.pw,L.ph);
+  const lx=L.px+L.pad;
+  ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.font='bold '+Math.round(Math.max(16, L.ph*0.13))+'px system-ui, sans-serif';
+  ctx.fillText('Under construction: '+B.name, lx, L.py+L.ph*0.17);
+  ctx.font=Math.round(Math.max(12, L.ph*0.09))+'px system-ui, sans-serif';
+  ctx.fillStyle=PAL.shopWall;
+  ctx.fillText(B.sum, lx, L.py+L.ph*0.34);
+  ctx.fillStyle='#c9a06a'; ctx.font='bold '+Math.round(Math.max(14, L.ph*0.11))+'px system-ui, sans-serif';
+  ctx.fillText(s.have+' / '+s.need+' wood added', lx, L.py+L.ph*0.5);
+  ctx.fillStyle=PAL.shopWall; ctx.font=Math.round(Math.max(11, L.ph*0.08))+'px system-ui, sans-serif';
+  ctx.fillText('Anyone can add wood \u2014 when it\u2019s full, the building rises for everyone.', lx, L.py+L.ph*0.63);
+  const A=L.addBtn, can=player.wood>0 && s.have<s.need;
+  rect(A.x,A.y,A.w,A.h, can?'#3e7d3c':'#8e2f27');
+  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.5); ctx.strokeRect(A.x,A.y,A.w,A.h);
+  ctx.fillStyle=PAL.panelHi; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font='bold '+Math.round(A.h*0.42)+'px system-ui, sans-serif';
+  ctx.fillText('Add Wood (+'+Math.min(5, s.need-s.have, Math.max(0,player.wood))+')', A.x+A.w/2, A.y+A.h/2);
+  if(shop.msgT>0 && shop.msg){ ctx.fillStyle='#ffdf9e'; ctx.textAlign='center';
+    ctx.font=Math.round(Math.max(11, L.ph*0.08))+'px system-ui, sans-serif';
+    ctx.fillText(shop.msg, L.px+L.pw/2, L.addBtn.y-Math.max(11,10*DPR)); }
+  const C=L.closeBtn;
+  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(C.x,C.y,C.w,C.h);
+  ctx.beginPath(); ctx.moveTo(C.x+C.w*0.28,C.y+C.h*0.28); ctx.lineTo(C.x+C.w*0.72,C.y+C.h*0.72);
+  ctx.moveTo(C.x+C.w*0.72,C.y+C.h*0.28); ctx.lineTo(C.x+C.w*0.28,C.y+C.h*0.72); ctx.stroke();
+  ctx.restore();
+}
+function siteUIClick(cx,cy){
+  const L=siteUILayout(), inR=(r)=> cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
+  if(inR(L.closeBtn)){ siteUI.open=false; return; }
+  if(inR(L.addBtn)){ siteContribute(); return; }
+  if(cx<L.px||cx>L.px+L.pw||cy<L.py||cy>L.py+L.ph) siteUI.open=false;
+}
 function drawShopUI(){
   if(!shopUI.open) return;
   const L=shopUILayout();
@@ -4577,12 +4813,14 @@ function toolButtons(){
   const wT=tools.length*s+(tools.length-1)*gap;
   const wW=weapons.length?weapons.length*s+(weapons.length-1)*gap:0;
   const wF=food.length?food.length*s+(food.length-1)*gap:0;
-  const total=wT + (weapons.length?groupGap+wW:0) + (food.length?groupGap+wF:0);
+  const wB=(mapMode==='forest')?s:0;                                                                // the BUILD action (forest only)
+  const total=wT + (weapons.length?groupGap+wW:0) + (food.length?groupGap+wF:0) + (wB?groupGap+wB:0);
   let x=canvas.width/2 - total/2; const y=canvas.height - s*1.34;
   const out=[];
   for(const k of tools){ out.push({key:k, x, y, w:s, h:s, group:'tools'}); x+=s+gap; }
   if(weapons.length){ x += groupGap - gap; for(const k of weapons){ out.push({key:k, x, y, w:s, h:s, group:'weapons'}); x+=s+gap; } }
   if(food.length){ x += groupGap - gap; for(const k of food){ out.push({key:k, x, y, w:s, h:s, group:'food'}); x+=s+gap; } }
+  if(mapMode==='forest'){ x += groupGap - gap; out.push({key:'build', x, y, w:s, h:s, group:'build'}); }
   return out;
 }
 const FOOD_CD=10;                                     // seconds between bites — the belly needs a moment
@@ -4606,6 +4844,12 @@ function eatFood(k){                                  // tap a food button — e
   }
 }
 function drawToolIcon(key, cx, cy, s){
+  if(key==='build'){                                  // a mallet over a fresh plank
+    rect(cx-s*0.3, cy+s*0.16, s*0.6, s*0.1, PAL.plankHi);
+    beam(cx-s*0.16, cy+s*0.1, cx+s*0.12, cy-s*0.16, s*0.055, PAL.trunk);
+    rect(cx+s*0.0, cy-s*0.34, s*0.32, s*0.18, PAL.steelDark);
+    return;
+  }
   if(key==='jerky'){                                  // a gnarled strip of smoked venison
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(-0.5);
     ctx.fillStyle='#7d3a22'; ctx.beginPath();
@@ -4675,10 +4919,10 @@ function drawToolBar(){
   ctx.save(); ctx.fillStyle=PAL.target; ctx.font='bold '+Math.round(btns[0].w*0.17)+'px system-ui, sans-serif';
   ctx.textAlign='center'; ctx.textBaseline='bottom';
   for(const gname in groups){ const gs=groups[gname], x0=gs[0].x, x1=gs[gs.length-1].x+gs[gs.length-1].w;
-    ctx.fillText(gname==='tools'?'TOOLS':gname==='food'?'FOOD':'WEAPONS', (x0+x1)/2, gs[0].y - Math.max(4,4*DPR)); }
+    ctx.fillText(gname==='tools'?'TOOLS':gname==='food'?'FOOD':gname==='build'?'BUILD':'WEAPONS', (x0+x1)/2, gs[0].y - Math.max(4,4*DPR)); }
   ctx.restore();
   for(const b of btns){
-    const sel=player.tool===b.key;
+    const sel=player.tool===b.key || (b.key==='build' && (buildUI.open || !!buildMode));
     ctx.save();
     ctx.globalAlpha=0.9; ctx.fillStyle=PAL.outside; ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.globalAlpha=1; ctx.strokeStyle = sel?PAL.target:PAL.trunk;
@@ -4950,7 +5194,9 @@ function endPointer(ev){
        c.x>=playAgainBtn.x && c.x<=playAgainBtn.x+playAgainBtn.w && c.y>=playAgainBtn.y && c.y<=playAgainBtn.y+playAgainBtn.h){ playAgain(); dragging=false; return; }
     if(scene==='tavern' && !wasPinch && !movedFar){ tavernTap(c.x, c.y); dragging=false; return; }   // pick a hero
     if(!wasPinch && !movedFar && !player.dead){
-      if(shopUI.open){ shopUIClick(c.x, c.y); }      // modal captures the tap
+      if(buildUI.open){ buildUIClick(c.x, c.y); }    // the building catalog captures the tap
+      else if(siteUI.open){ siteUIClick(c.x, c.y); } // a build site's panel captures the tap
+      else if(shopUI.open){ shopUIClick(c.x, c.y); }      // modal captures the tap
       else if(altarUI.open){ altarClick(c.x, c.y); } // altar rites capture the tap
       else if(invUI.open){ invUIClick(c.x, c.y); }   // inventory screen captures the tap
       else {
@@ -4959,8 +5205,18 @@ function endPointer(ev){
         const IB=invButtonBox();
         if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
         for(const b of toolButtons()){ if(hitTool) break; if(c.x>=b.x&&c.x<=b.x+b.w&&c.y>=b.y&&c.y<=b.y+b.h){
+          const wasBuilding=!!buildMode; buildMode=null; _buildConfirmBox=null;                       // picking ANY action icon leaves ground-select
+          if(b.key==='build'){ if(!wasBuilding) buildUI.open=!buildUI.open; siteUI.open=false; hitTool=true; break; }
           if(b.group==='food'){ eatFood(b.key); hitTool=true; break; }                                // food buttons eat, they don't equip
           player.tool = player.tool===b.key ? null : b.key; setTool(player.tool); hitTool=true; break; } }
+        if(!hitTool && buildMode){                                                                 // ground-select mode: taps place the ghost
+          if(_buildConfirmBox && c.x>=_buildConfirmBox.x && c.x<=_buildConfirmBox.x+_buildConfirmBox.w &&
+             c.y>=_buildConfirmBox.y && c.y<=_buildConfirmBox.y+_buildConfirmBox.h){ confirmBuildSite(); }
+          else { const w2=screenToWorld(c.x,c.y);
+            buildMode.tx=Math.max(0,Math.min(GRID/TILE-BUILDINGS[buildMode.kind].tiles, Math.floor(w2.x/CELL/TILE)));
+            buildMode.ty=Math.max(0,Math.min(GRID/TILE-BUILDINGS[buildMode.kind].tiles, Math.floor(w2.y/CELL/TILE))); }
+          hitTool=true;
+        }
         if(!hitTool){
           const wheatKey=wheatAtScreen(c.x, c.y);
           const prop=wheatKey==null ? propAtScreen(c.x, c.y) : null;
@@ -5477,6 +5733,8 @@ function buildSnap(){
       fw:d.fawn?1:0, an:d.antlers?1:0, pr:d.pregnant?1:0, sc:d.scale, h:d.hp }); }
     sn.deer=deer; sn.deerFull=extras?1:0; }
   if(extras){
+    sn.sites=(world.sites||[]).map(s=>[s.id,s.kind,s.tx,s.ty,s.need,s.have]);
+    sn.bld=[shop.placed?[shop.x,shop.y]:0, stall.placed?[stall.x,stall.y]:0, butcher.placed?[butcher.x,butcher.y]:0, armorShop.placed?[armorShop.x,armorShop.y]:0];
     const bush=[]; for(const b of world.bushes) bush.push(b.grow==null?[b.x,b.y]:[b.x,b.y,+(+b.grow).toFixed(2)]);
     const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?1:2]);   // crops so the guest sees wheat ripen
     sn.bush=bush; sn.crops=crops;
@@ -5500,6 +5758,13 @@ function netApplySnap(m){                              // world portion of a sna
     g.hp=s.h; g.looted=!!s.lo; g.st=s.st; g.swingT=s.sw; g.punchT=s.pu; g.castT=s.ca; g.hopAmt=s.ho; if(g.kind==='bigskel') g.big=true;
     g.srcKind=s.sk||null; g.antlers=!!s.sa; g.fawn=!!s.sf; }
   if(m.gobFull){ for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); } }
+  if(m.sites){ world.sites=m.sites.map(a2=>({id:a2[0],kind:a2[1],tx:a2[2],ty:a2[3],need:a2[4],have:a2[5]}));
+    if(siteUI.open && !siteById(siteUI.id)) siteUI.open=false; }
+  if(m.bld){ const [bS,bSt,bBu,bAr]=m.bld;
+    if(bS && !shop.placed) placeShopAt(bS[0],bS[1]);
+    if(bSt && !stall.placed) placeStallAt(bSt[0],bSt[1]);
+    if(bBu && !butcher.placed) placeButcherAt(bBu[0],bBu[1]);
+    if(bAr && !armorShop.placed) placeArmorShopAt(bAr[0],bAr[1]); }
   if(m.bush){ world.bushes.length=0; for(const b of m.bush) world.bushes.push(b.length>2?{x:b[0],y:b[1],grow:b[2]}:{x:b[0],y:b[1]}); }
   if(m.crops){ world.crops.clear();
     for(const [k,st] of m.crops) world.crops.set(k, {stage: st===0?'till':st===1?'seed':'wheat', t:0}); }
@@ -5513,7 +5778,7 @@ function netOnData(m, fromClient){
   if(!m||!m.t) return;
   const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
-  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1};
+  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
   if(MAP_FX[m.t] && m.map && m.map!==mapMode) return;   // effects on a map we're not looking at
   if(m.t==='wel'){ if(mapMode==='dungeon') mapMode='forest'; savedDungeon=null; savedForest=null;
@@ -5545,6 +5810,8 @@ function netOnData(m, fromClient){
     if(f && f.kind==='deer' && f.cr.dead && !f.cr.gone && (f.cr.deadT||0)<DEER_FRESH_T) f.cr.deadT=DEER_FRESH_T; } }
   else if(m.t==='lootg'){ if(net.mode==='host'){ const f=findByNid(m.nid);                      // guest took an enemy's soul → mark the body spent here too
     if(f && f.kind==='goblin' && f.cr.dead && !f.cr.gone && !f.cr.looted){ f.cr.looted=true; f.cr.deadT=Math.max(f.cr.deadT||0,60); } } }
+  else if(m.t==='siteNew'){ if(net.mode==='host') addSite(m.kind, m.tx|0, m.ty|0); }
+  else if(m.t==='siteWood'){ if(net.mode==='host'){ const s=(world.sites||[]).find(x2=>x2.id===m.i); siteAddWood(s, Math.max(0, Math.min(50, m.n|0))); } }
   else if(m.t==='cropAct'){ if(net.mode==='host'){                                              // guest farmed — apply the same change here (snapshots echo it back)
     if(m.op==='till'){ tillOrUntill(m.cx, m.cy); }
     else if(m.op==='plant'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
