@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · p';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · q';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -75,7 +75,7 @@ function levelHours(i){ const M=RELEASE.capLevel-1, q=RELEASE.q;     // hours fo
 function xpForLevel(lv){                                             // XP to go lv -> lv+1, derived from hours
   const tm=(tOf(lv)+tOf(lv+1))/2;                                    // midpoint t of the level being earned
   return Math.round(levelHours(lv)*curveVal(KILLS_PER_HOUR,tm)*curveVal(XP_PER_KILL,tm)); }
-const XP_MULT = { fawn:0.5, doe:1, buck:1.5, claw:1, archer:1.2, turtle:1, boss:6, king:40 };  // §6 budget presets
+const XP_MULT = { fawn:0.5, doe:1, buck:1.5, claw:1, archer:1.2, turtle:1, wood:0.5, boss:6, king:40 };  // §6 budget presets
 function grantKillXP(kind, cr){                                      // credit the local player's killing blow
   if((player.level||1)>=RELEASE.capLevel) return;                    // cap-locked: the map is what remains
   const key = kind==='deer' ? (cr.fawn?'fawn':cr.antlers?'buck':'doe') : (cr.kind||'claw');
@@ -188,6 +188,7 @@ function rollKillCard(kind, cr){             // what a killing blow can teach yo
   const ids=Object.keys(CARDS);
   if(key==='king') grantCard(ids[(Math.random()*ids.length)|0], Math.max(cardTierRoll(), 2));   // the King teaches at least a Rare
   else if(key==='boss') grantCard(ids[(Math.random()*ids.length)|0]);
+  else if(key==='wood'){ if(Math.random()<0.25) grantCard(ids[(Math.random()*ids.length)|0]); } // Wood Goblins are walking lessons
   else if(Math.random()<0.03) grantCard(ids[(Math.random()*ids.length)|0]);                     // 3% from ordinary kills
 }
 function trainCard(id){                      // Memory → Trained, if the grid has room; training-in starts
@@ -1292,7 +1293,8 @@ function updateMelee(g, dt){
       if(g.roamer && g.leader){ followLeader(g, dt); } else { g.gpath=[]; goblinDance(g, dt); } return;
     }
   }
-  const range=boss?3:1.6, dmg=boss?10:5, cd=boss?1.4:1.0, speed=boss?MOVE_SPEED*0.6:MOVE_SPEED*0.9;   // goblins hit for 5, the boss's club for 10
+  const wood=g.kind==='wood';
+  const range=boss?3:1.6, dmg=boss?10:wood?1:5, cd=boss?1.4:1.0, speed=boss?MOVE_SPEED*0.6:wood?MOVE_SPEED*0.7:MOVE_SPEED*0.9;   // goblins hit for 5, the boss for 10 — a Wood Goblin for 1
   if(pd>(g.aggro?9999:8*aggroMulFor(T))){                     // not engaged — the Aggro arrows set how close is too close
     if(g.roamer && g.leader){ followLeader(g, dt); return; }  // roaming claw — trail its bow goblin
     g.gpath=[]; goblinDance(g, dt); return;                   // camp goblin — mill at the fire
@@ -2282,7 +2284,9 @@ function updateChop(dt){
   if(player.chopT>=CHOP_TIME){
     const err=canCarry(5*ITEM_LBS.wood, player.wood>0?0:1);
     if(err){ packRefuse(err); player.chopTree=null; player.chopping=false; player.chopT=0; return; }   // too laden to haul the timber — the tree stands
-    startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi); player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
+    startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi);
+    maybeWoodGoblin((tree.x+1.5)*CELL, (tree.y+2.2)*CELL);                 // sometimes something was LIVING in there
+    player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
 }
 function fellTree(tree, fromWX){                     // topple a tree away from `fromWX`
   const dir = fromWX < (tree.x+1.5)*CELL ? 1 : -1;
@@ -2291,6 +2295,20 @@ function fellTree(tree, fromWX){                     // topple a tree away from 
   for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) world.terrain[gi(tree.x+dx,tree.y+dy)]=0;
 }
 function startFell(tree){ fellTree(tree, player.px); }   // player chops → topple away from the player
+/* --- Wood Goblins: 1 felled tree in 5 shakes one loose. A scrawny nuisance — 1 damage, 6 HP,
+   three bare-handed punches put it down — but it has a 25% chance of teaching a training card. --- */
+function maybeWoodGoblin(wx, wy){
+  if(Math.random()>=0.2) return;                       // 1 tree in 5
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'wgob', map:mapMode, x:wx, y:wy});   // the host owns the creatures
+  else spawnWoodGoblin(wx, wy);
+}
+function spawnWoodGoblin(wx, wy){                      // authoritative (host / solo)
+  const cx=cellOf(wx), cy=cellOf(wy);
+  goblins.push({ kind:'wood', px:wx, py:wy, x:cx, y:cy, face:'S', faceLeft:false,
+    hp:6, aggro:true, homeX:cx, homeY:cy, arrows:0, atkCD:0, gstate:'camp', gpath:[], chopTree:null, chopT:0,
+    dead:false, deadT:0, gone:false, looted:false });
+  if(!DEDICATED) addFloat('A Wood Goblin tumbles out!', wx, wy-CELL*2.2, '#9fce6f');
+}
 function updateFelling(dt){
   for(let i=fallingTrees.length-1;i>=0;i--){ const ft=fallingTrees[i]; ft.t+=dt;
     ft.ang=Math.min(Math.PI/2, (ft.t/FALL_TIME)*(Math.PI/2));
@@ -3861,8 +3879,8 @@ function drawGoblin(pt, g){                   // green humanoid + weapon, 8-dire
   if(g.kind==='bat'){ drawBat(pt, g); return; }
   if(g.kind==='rat'){ drawRat(pt, g); return; }
   if(g.kind==='skeleton'){ drawSkeleton(pt, g); return; }
-  const boss=g.kind==='boss', fp=faceParams(g.face||'S');
-  const u=Math.max(9, CELL*cam.scale*(boss?2.85:0.78)), skin=boss?PAL.goblinDark:PAL.goblin;   // the boss towers over his 3x3 footprint
+  const boss=g.kind==='boss', woodkin=g.kind==='wood', fp=faceParams(g.face||'S');
+  const u=Math.max(9, CELL*cam.scale*(boss?2.85:woodkin?0.55:0.78)), skin=boss?PAL.goblinDark:woodkin?'#8a6b3f':PAL.goblin;   // Wood Goblins are small and bark-brown
   shadow(pt.x, pt.y, u*(boss?0.5:0.34), u*(boss?0.18:0.12));            // shadow stays on the ground
   const bp={ x:pt.x, y:pt.y-(g.hopAmt||0)*u*0.95 };                     // body leaps up while dancing
   if(fp.mode==='side') goblinSide(bp,g,u,skin,fp.dir,fp.pitch);
@@ -6239,7 +6257,7 @@ function netOnData(m, fromClient){
   if(!m||!m.t) return;
   const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
-  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1};
+  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
   if(MAP_FX[m.t] && m.map && m.map!==mapMode) return;   // effects on a map we're not looking at
   if(m.t==='wel'){ if(mapMode==='dungeon') mapMode='forest'; savedDungeon=null; savedForest=null;
@@ -6271,6 +6289,7 @@ function netOnData(m, fromClient){
     if(f && f.kind==='deer' && f.cr.dead && !f.cr.gone && (f.cr.deadT||0)<DEER_FRESH_T) f.cr.deadT=DEER_FRESH_T; } }
   else if(m.t==='lootg'){ if(net.mode==='host'){ const f=findByNid(m.nid);                      // guest took an enemy's soul → mark the body spent here too
     if(f && f.kind==='goblin' && f.cr.dead && !f.cr.gone && !f.cr.looted){ f.cr.looted=true; f.cr.deadT=Math.max(f.cr.deadT||0,60); } } }
+  else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
   else if(m.t==='siteNew'){ if(net.mode==='host') addSite(m.kind, m.tx|0, m.ty|0); }
   else if(m.t==='siteWood'){ if(net.mode==='host'){ const s=(world.sites||[]).find(x2=>x2.id===m.i); siteAddWood(s, Math.max(0, Math.min(50, m.n|0))); } }
   else if(m.t==='cropAct'){ if(net.mode==='host'){                                              // guest farmed — apply the same change here (snapshots echo it back)
