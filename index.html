@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · l';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · m';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -91,6 +91,44 @@ function levelUpFanfare(){                                           // a level 
   addFloat('LEVEL '+player.level+'!', player.px, player.py-CELL*2.6, '#ffd44d');
   if(typeof spawnMagicHit==='function') spawnMagicHit(player.px, player.py-CELL*0.5, 1);
   if(player.level>=RELEASE.capLevel) addFloat('Release '+RELEASE.num+' cap reached', player.px, player.py-CELL*2.0, '#e7c877');
+}
+
+/* --- hunger & regeneration (§4d of the progression doc) ---
+   The drumstick bar is the HUNGER bar: it falls as you play (90 min full → starving) and a little
+   faster when you take hits. While fed, health regenerates a point every 10 s — resting carries a
+   level-1 hero. Meals fill hunger FAST and return health SLOWLY (digestion): you cannot eat your
+   way out of a fight you are losing. Starving turns regeneration off and drains health instead. */
+const HUNGER = {
+  fullMinutes: 90,          // full bar → starving, on the clock alone
+  dmgHungerShare: 0.2,      // each point of damage taken also costs this much hunger
+  regenHp: 1, regenSecs: 10,// fed regeneration: 1 HP per 10 s (flat — strong early, faint later; §4d finding −1)
+  digestPctPerMin: 4,       // digestion returns health at 4% of max HP per minute
+  jerkyHunger: 20,          // a snack buys a strip of the bar…
+  starveHpPerSec: 1         // …and an empty one drains a point of health every second
+};
+function updateHunger(dt){                        // runs every frame for the local hero (host and guest alike)
+  player.stamina = Math.max(0, player.stamina - dt*(100/(HUNGER.fullMinutes*60)));
+  if(player.stamina>0){                           // FED: regeneration only works while you are fed
+    player.starveHp=0;
+    if(player.hp<player.hpMax && !player.dead){
+      player.regenT=(player.regenT||0)+dt;
+      while(player.regenT>=HUNGER.regenSecs){ player.regenT-=HUNGER.regenSecs;
+        player.hp=Math.min(player.hpMax, player.hp+HUNGER.regenHp); }
+    } else player.regenT=0;
+  } else {                                        // STARVING: nothing comes back and health drains
+    player.regenT=0;
+    player.starveHp=(player.starveHp||0)+dt*HUNGER.starveHpPerSec;
+    const n=Math.floor(player.starveHp);
+    if(n>=1 && !player.dead){ player.starveHp-=n; playerHit(n, false, true); }
+  }
+  if((player.digestHp||0)>0 && !player.dead){     // DIGESTING: queued meal healing trickles in slowly
+    const rate=player.hpMax*HUNGER.digestPctPerMin/100/60;      // HP per second
+    const heal=Math.min(player.digestHp, rate*dt);
+    player.digestHp-=heal; player._digestAcc=(player._digestAcc||0)+heal;
+    const w=Math.floor(player._digestAcc);
+    if(w>=1){ player._digestAcc-=w; player.hp=Math.min(player.hpMax, player.hp+w); }
+    if(player.hp>=player.hpMax){ player.digestHp=0; player._digestAcc=0; }
+  }
 }
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
@@ -904,7 +942,8 @@ const player = {
   magic: {club:0, bow:0, longbow:0, sword:0, gaxe:0, helmet:0, armor:0, leggings:0, chainmail:0}, witchEye: 0,   // per-item altar boosts (0 / 0.2 / 1.0) + Eye of the Witch drops
   tool: null, chopTree: null, chopping: false, chopT: 0, chipT: 0, wood: 10, club: 0, bow: 1, arrows: 10, hoe: 0, seeds: 0, wheat: 0, meat: 0, jerky: 0, meal: 0, skins: 0, helmet: 0, armor: 0, leggings: 0, goShop: false, goStall: false, goArmor: false, attack: null, stamina: 100, propTarget: null, punchT: 0,
   dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0, pack: 'small',
-  level: 1, xp: 0                                    // the identity layer — level/XP persist through death
+  level: 1, xp: 0,                                   // the identity layer — level/XP persist through death
+  digestHp: 0, regenT: 0, starveHp: 0, _digestAcc: 0 // hunger system state (§4d)
 };
 // playable races: body shape (sc=overall size, tw=width/thickness, hh=height proportion) + head look.
 // All wear the same clothes (PAL.playerBody/Legs); only body shape, skin, hair, ears/beard/tusks change.
@@ -2507,6 +2546,7 @@ function playerHit(amount, blood, ignoreArmor){    // player takes damage; ghost
 
   player.lostHp = (player.dmgT>0 ? (player.lostHp||0) : 0) + amount;
   player.hp = Math.max(0, player.hp - amount);
+  player.stamina = Math.max(0, player.stamina - amount*HUNGER.dmgHungerShare);   // taking a beating works up an appetite (§4d)
   player.dmgT = DMG_FLASH;
   player.hurtT = 0.5;                                     // red screen-edge warning flash
   if(blood!==false) spawnBlood(player.px, player.py-CELL*0.5, 16, true);   // blood splatter when struck
@@ -4069,7 +4109,10 @@ function drawStamina(){                            // stamina meter under the he
   ctx.save();
   ctx.strokeStyle=zero?PAL.heartFull:PAL.trunk; ctx.lineWidth=Math.max(2,DPR*(zero?2.2:1.6)); ctx.strokeRect(bx,by,bw,bh);
   ctx.fillStyle=PAL.target; ctx.font='bold '+Math.round(r*1.25)+'px system-ui, sans-serif';
-  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(Math.ceil(player.stamina), bx+bw/2, y+DPR*0.5);
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(zero?'STARVING':Math.ceil(player.stamina), bx+bw/2, y+DPR*0.5);
+  if((player.digestHp||0)>=1){                     // a queued meal trickling in: show what's still to come
+    ctx.fillStyle='#8fd07a'; ctx.font='bold '+Math.round(r*1.0)+'px system-ui, sans-serif';
+    ctx.textAlign='left'; ctx.fillText('+'+Math.ceil(player.digestHp)+' HP', bx+bw+r*0.7, y+DPR*0.5); }
   ctx.restore();
 }
 function drawLevelBar(){                           // "Lv N" + a slim XP bar; gold + CAP when cap-locked
@@ -5009,21 +5052,21 @@ function toolButtons(){
 }
 const FOOD_CD=10;                                     // seconds between bites — the belly needs a moment
 let foodCD=0;
-function eatFood(k){                                  // tap a food button — eat one on the spot
-  if(foodCD>0){ addFloat('Still digesting… ('+Math.ceil(foodCD)+'s)', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+function eatFood(k){                                  // tap a food button: hunger fills NOW, health returns as it digests (§4d)
+  if(foodCD>0){ addFloat('Still chewing… ('+Math.ceil(foodCD)+'s)', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
   if(k==='jerky'){
     if((player.jerky||0)<1) return;
     if(player.hp>=player.hpMax && player.stamina>=100){ addFloat('Already full!', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
-    player.jerky--; player.hp=Math.min(player.hpMax, player.hp+5); player.stamina=Math.min(100, player.stamina+20);
-    addFloat('+5 HP', player.px, player.py-CELL*2.1, PAL.heartFull);
-    addFloat('+20 stamina', player.px, player.py-CELL*1.7, PAL.stamFill);
+    player.jerky--; player.digestHp=(player.digestHp||0)+5; player.stamina=Math.min(100, player.stamina+HUNGER.jerkyHunger);
+    addFloat('+'+HUNGER.jerkyHunger+' hunger', player.px, player.py-CELL*2.1, PAL.stamFill);
+    addFloat('+5 HP as it digests', player.px, player.py-CELL*1.7, PAL.heartFull);
     foodCD=FOOD_CD;
   } else if(k==='meal'){
     if((player.meal||0)<1) return;
     if(player.hp>=player.hpMax && player.stamina>=100){ addFloat('Already full!', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
-    player.meal--; player.hp=Math.min(player.hpMax, player.hp+40); player.stamina=100;
-    addFloat('+40 HP — a hearty feast!', player.px, player.py-CELL*2.1, '#ffd44d');
-    addFloat('stamina restored', player.px, player.py-CELL*1.7, PAL.stamFill);
+    player.meal--; player.digestHp=(player.digestHp||0)+40; player.stamina=100;
+    addFloat('Hunger sated — a hearty feast!', player.px, player.py-CELL*2.1, '#ffd44d');
+    addFloat('+40 HP as it digests', player.px, player.py-CELL*1.7, PAL.heartFull);
     foodCD=FOOD_CD;
   }
 }
@@ -5271,8 +5314,7 @@ function loop(ts){
     requestAnimationFrame(loop); return;
   }
   if(net.mode==='guest'){                        // co-op guest: the world is streamed from the host; only run the local hero
-    player.stamina = Math.max(0, player.stamina - dt*(10/60));
-    if(player.stamina<=0){ player.starveHp=(player.starveHp||0)+dt; if(player.starveHp>=60){ player.starveHp=0; playerHit(1, false, true); } } else player.starveHp=0;
+    updateHunger(dt);                            // the hunger clock, regen and digestion (§4d)
     if(shop.msgT>0) shop.msgT-=dt;
     if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }
     updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt);
@@ -5289,9 +5331,7 @@ function loop(ts){
     updateCamFollow(dt);
     netUpdate(dt); draw(); requestAnimationFrame(loop); return;
   }
-  player.stamina = Math.max(0, player.stamina - dt*(10/60));                                     // stamina drains 10/min
-  if(player.stamina<=0){ player.starveHp=(player.starveHp||0)+dt; if(player.starveHp>=60){ player.starveHp=0; playerHit(1, false, true); } }  // starving: -1 HP / min (armor doesn't help)
-  else player.starveHp=0;
+  updateHunger(dt);                              // the hunger clock, regen and digestion (§4d)
   if(shop.msgT>0) shop.msgT-=dt;                                                                 // fade the shop message
   if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }  // deselect a tool that's no longer owned
   updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt); updateBushes(dt);
@@ -5517,6 +5557,7 @@ function resetPlayerStats(){                         // fresh start: full HP, st
   const rs=RACE_STATS[player.race]||RACE_STATS.human;   // race sets max hearts + move speed
   player.hpMax=rs.hpMax; player.speedMul=rs.speed;
   player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false; player.swingCD=0; player.pack='small'; player._packMsgT=0;
+  player.digestHp=0; player.regenT=0; player._digestAcc=0;   // hunger system state resets with the body
   if(player.level==null){ player.level=1; player.xp=0; }   // level/XP are identity — they survive a death; only a NEW character resets them (startAsRace)
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
