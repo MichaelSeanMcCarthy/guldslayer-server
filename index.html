@@ -50,7 +50,48 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · k';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · l';   // shown on the title screen — bump the letter on every deploy
+
+/* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
+   Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
+   This map is RELEASE 1: levels 1-5 over 10 authored hours at q=3.0 (level 2 lands ~9 min in).
+   Hours are the authored currency; XP is DERIVED from them via the two rate curves — never author an XP table. */
+const CAP = 100;                                        // the global cap t is authored against
+const RELEASE = { num:1, capLevel:5, hours:10, q:3.0 };  // this release's pacing knobs
+const tOf = (lv)=> (lv-1)/(CAP-1);
+const SHAPES = {
+  linear:     (t)=>t,
+  easeIn:     (t,s)=>Math.pow(t,(s&&s.k)||2),
+  easeOut:    (t,s)=>1-Math.pow(1-t,(s&&s.k)||2),
+  smoothstep: (t)=>t*t*(3-2*t),
+  plateau:    (t,s)=>Math.min(1, t/((s&&s.c)||1)),
+  stepped:    (t,s)=>Math.min(1, Math.floor(t*s.n)/(s.n-1)),
+};
+const curveVal = (spec,t)=>{ const tt=Math.max(0,Math.min(1,t)); return spec.min+(spec.max-spec.min)*SHAPES[spec.shape](tt,spec); };
+const KILLS_PER_HOUR = { min:40, max:18,   shape:'easeOut', k:2 };   // fights get longer as you level
+const XP_PER_KILL    = { min:12, max:9000, shape:'easeIn',  k:2 };   // a creature's worth scales hard with tier
+function levelHours(i){ const M=RELEASE.capLevel-1, q=RELEASE.q;     // hours for the i-th level-up of this release
+  return RELEASE.hours*(Math.pow(i/M,q)-Math.pow((i-1)/M,q)); }
+function xpForLevel(lv){                                             // XP to go lv -> lv+1, derived from hours
+  const tm=(tOf(lv)+tOf(lv+1))/2;                                    // midpoint t of the level being earned
+  return Math.round(levelHours(lv)*curveVal(KILLS_PER_HOUR,tm)*curveVal(XP_PER_KILL,tm)); }
+const XP_MULT = { fawn:0.5, doe:1, buck:1.5, claw:1, archer:1.2, turtle:1, boss:6, king:40 };  // §6 budget presets
+function grantKillXP(kind, cr){                                      // credit the local player's killing blow
+  if((player.level||1)>=RELEASE.capLevel) return;                    // cap-locked: the map is what remains
+  const key = kind==='deer' ? (cr.fawn?'fawn':cr.antlers?'buck':'doe') : (cr.kind||'claw');
+  const xp=Math.max(1, Math.round(curveVal(XP_PER_KILL, tOf(player.level||1))*(XP_MULT[key]||1)));
+  player.xp=(player.xp||0)+xp;
+  addFloat('+'+xp+' XP', player.px, player.py-CELL*1.6, '#9fd4ff');
+  while(player.level<RELEASE.capLevel && player.xp>=xpForLevel(player.level)){
+    player.xp-=xpForLevel(player.level); player.level++; levelUpFanfare(); }
+  if(player.level>=RELEASE.capLevel) player.xp=0;                    // capped: the bar rests full
+}
+function levelUpFanfare(){                                           // a level restores you whole
+  player.hp=player.hpMax; player.stamina=100;
+  addFloat('LEVEL '+player.level+'!', player.px, player.py-CELL*2.6, '#ffd44d');
+  if(typeof spawnMagicHit==='function') spawnMagicHit(player.px, player.py-CELL*0.5, 1);
+  if(player.level>=RELEASE.capLevel) addFloat('Release '+RELEASE.num+' cap reached', player.px, player.py-CELL*2.0, '#e7c877');
+}
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -862,7 +903,8 @@ const player = {
   eqHelmet: 1, eqArmor: 1, eqLeggings: 1,            // armor worn-state (owned pieces are worn unless unequipped)
   magic: {club:0, bow:0, longbow:0, sword:0, gaxe:0, helmet:0, armor:0, leggings:0, chainmail:0}, witchEye: 0,   // per-item altar boosts (0 / 0.2 / 1.0) + Eye of the Witch drops
   tool: null, chopTree: null, chopping: false, chopT: 0, chipT: 0, wood: 10, club: 0, bow: 1, arrows: 10, hoe: 0, seeds: 0, wheat: 0, meat: 0, jerky: 0, meal: 0, skins: 0, helmet: 0, armor: 0, leggings: 0, goShop: false, goStall: false, goArmor: false, attack: null, stamina: 100, propTarget: null, punchT: 0,
-  dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0, pack: 'small'
+  dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0, pack: 'small',
+  level: 1, xp: 0                                    // the identity layer — level/XP persist through death
 };
 // playable races: body shape (sc=overall size, tw=width/thickness, hh=height proportion) + head look.
 // All wear the same clothes (PAL.playerBody/Legs); only body shape, skin, hair, ears/beard/tusks change.
@@ -1933,6 +1975,8 @@ function damageCreature(kind, cr, amount, fromRemote){   // deal `amount` damage
   else spawnBlood(p.x, p.y-CELL*0.35, 9, false);    // wounded — a smaller spray
 }
 function coopPlayerDamage(kind, cr, amount){         // a player's blow: host applies it; a guest relays it to the host
+  const willDie = !creatureDead(kind,cr) && ((cr.hp==null?1:cr.hp)-amount)<=0;
+  if(willDie) grantKillXP(kind, cr);                 // XP credits the player who lands the killing blow
   if(typeof net!=='undefined' && net.mode==='guest'){ netSend({t:'dmg', map:mapMode, nid:cr.nid, kind, amount}); return; }
   damageCreature(kind, cr, amount);
 }
@@ -3945,6 +3989,7 @@ function draw(){
   }
   drawHearts();             // player HP, top-left
   drawStamina();            // stamina meter, under the hearts
+  drawLevelBar();           // level badge + XP progress, under the stamina meter
   drawHudFace();            // player portrait, top-right
     drawGuldHUD();            // GULD purse under the portrait
   drawTimeHUD();            // the day dial — sun and moon riding the sky band
@@ -4027,13 +4072,30 @@ function drawStamina(){                            // stamina meter under the he
   ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(Math.ceil(player.stamina), bx+bw/2, y+DPR*0.5);
   ctx.restore();
 }
+function drawLevelBar(){                           // "Lv N" + a slim XP bar; gold + CAP when cap-locked
+  const r=Math.max(9, 11*DPR), y=r*6.7, bx=r*3.7, bw=r*10.5, bh=r*0.75;
+  const lv=player.level||1, capped=lv>=RELEASE.capLevel;
+  ctx.save();
+  ctx.fillStyle='#ffd44d'; ctx.font='bold '+Math.round(r*1.2)+'px system-ui, sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText('Lv '+lv, r*1.15, y);
+  rect(bx, y-bh/2, bw, bh, PAL.shadow);                          // empty track
+  const need=capped?1:xpForLevel(lv);
+  const frac=capped?1:Math.max(0,Math.min(1,(player.xp||0)/need));
+  rect(bx, y-bh/2, bw*frac, bh, capped?'#c9a23a':'#6fb7ff');     // fill: sky-blue XP, gold at the cap
+  ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(bx, y-bh/2, bw, bh);
+  ctx.fillStyle=capped?'#ffe9a8':'#dfeeff'; ctx.font='bold '+Math.round(r*0.8)+'px system-ui, sans-serif';
+  ctx.textAlign='center';
+  ctx.fillText(capped ? 'CAP — finish the map' : (player.xp||0)+' / '+need+' XP', bx+bw/2, y+DPR*0.5);
+  ctx.restore();
+}
 function drawInventory(){
   // resource list — wood, arrows, skins; plus equipped armor. Weapons live on the tool bar, not here.
   const party = (typeof net!=='undefined' && net.mode!=='off') ? remotePlayers().filter(p2=>p2.active) : [];   // co-op friends in the world
   if(!player.wood && !player.arrows && !player.skins && !player.wheat && !player.meat && !player.souls && !player.witchEye && !player.goblinKey && !player.iron && !player.silver && !party.length) return;
   const r=Math.max(9, 11*DPR), x=r*1.6, ic=r*1.5;
   ctx.save(); ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.font='bold '+Math.round(r*1.7)+'px system-ui, sans-serif';
-  let y=r*7.8;                                     // gap below the stamina meter before resources begin
+  let y=r*8.6;                                     // gap below the stamina meter + level bar before resources begin
   for(const R2 of party){                          // each friend's portrait + hearts, above the resources
     const ps=ic*2.3;
     const im=(typeof RACE_FACES!=='undefined' && RACE_FACES[R2.race]) || (typeof hudFace!=='undefined'?hudFace:null);
@@ -5450,11 +5512,12 @@ function placePlayerStart(){                        // begin ON the dirt road, w
     if(found) break; } }
   player.px=(cx+0.5)*CELL; player.py=(cy+0.5)*CELL; player.path=[]; player.targetCell=null; player.face='S';
 }
-function startAsRace(k){ player.race=k; closeRaceModal(); resetPlayerStats(); scene='game'; placePlayerStart(); setDefaultView(); }   // Yes -> begin the game east of the shop
+function startAsRace(k){ player.race=k; player.level=1; player.xp=0; closeRaceModal(); resetPlayerStats(); scene='game'; placePlayerStart(); setDefaultView(); }   // Yes -> a NEW character begins at level 1
 function resetPlayerStats(){                         // fresh start: full HP, starting kit, cleared state
   const rs=RACE_STATS[player.race]||RACE_STATS.human;   // race sets max hearts + move speed
   player.hpMax=rs.hpMax; player.speedMul=rs.speed;
   player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false; player.swingCD=0; player.pack='small'; player._packMsgT=0;
+  if(player.level==null){ player.level=1; player.xp=0; }   // level/XP are identity — they survive a death; only a NEW character resets them (startAsRace)
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
