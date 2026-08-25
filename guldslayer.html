@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · e';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · f';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -807,7 +807,7 @@ const player = {
   eqHelmet: 1, eqArmor: 1, eqLeggings: 1,            // armor worn-state (owned pieces are worn unless unequipped)
   magic: {club:0, bow:0, longbow:0, sword:0, gaxe:0, helmet:0, armor:0, leggings:0, chainmail:0}, witchEye: 0,   // per-item altar boosts (0 / 0.2 / 1.0) + Eye of the Witch drops
   tool: null, chopTree: null, chopping: false, chopT: 0, chipT: 0, wood: 10, club: 0, bow: 1, arrows: 10, hoe: 0, seeds: 0, wheat: 0, meat: 0, jerky: 0, meal: 0, skins: 0, helmet: 0, armor: 0, leggings: 0, goShop: false, goStall: false, goArmor: false, attack: null, stamina: 100, propTarget: null, punchT: 0,
-  dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0
+  dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0, pack: 'small'
 };
 // playable races: body shape (sc=overall size, tw=width/thickness, hh=height proportion) + head look.
 // All wear the same clothes (PAL.playerBody/Legs); only body shape, skin, hair, ears/beard/tusks change.
@@ -825,12 +825,31 @@ const RACE_ORDER = ['human','dwarf','halfling','halforc','elf'];
 // per-race gameplay stats: hpMax (2 HP per heart) and speed multiplier applied to the player's move speed.
 const HP_PER_HEART = 10;              // each HUD heart is worth 10 HP
 const RACE_STATS = {
-  human:    { hpMax:50, speed:1.0 },                 // baseline: 5 hearts, normal speed
-  dwarf:    { hpMax:60, speed:1.0 },                 // +1 heart
-  halforc:  { hpMax:70, speed:0.8 },                 // +2 hearts, 20% slower
-  halfling: { hpMax:40, speed:1.2 },                 // -1 heart, 20% faster
-  elf:      { hpMax:50, speed:1.0 },
+  human:    { hpMax:50, speed:1.0, carry:100 },      // baseline: 5 hearts, normal speed
+  dwarf:    { hpMax:60, speed:1.0, carry:125 },      // +1 heart; sturdy back
+  halforc:  { hpMax:70, speed:0.8, carry:150 },      // +2 hearts, 20% slower; strongest back
+  halfling: { hpMax:40, speed:1.2, carry:75 },       // -1 heart, 20% faster; small frame
+  elf:      { hpMax:50, speed:1.0, carry:100 },
 };
+/* --- the pack: everything you carry has weight (GULD and souls are weightless).
+       Slots = how many DIFFERENT item types fit; the weight cap comes from your race. --- */
+const ITEM_LBS = { arrows:0.1, wheat:0.5, seeds:0.5, meat:1, jerky:1, meal:1, wood:2, skins:2,
+  bow:2, longbow:3, helmet:3, hoe:3, iron:4, club:4, leggings:4, pickaxe:5, sword:6, silver:6,
+  armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5 };
+function carryCap(){ const rs=RACE_STATS[player.race]||RACE_STATS.human; return rs.carry||100; }
+function packSlots(){ return player.pack==='large'?16 : player.pack==='medium'?12 : 8; }
+function packName(){ return player.pack==='large'?'Large Pack' : player.pack==='medium'?'Medium Pack' : 'Small Pack'; }
+function packWeight(){ let w=0; for(const k in ITEM_LBS) w+=(player[k]||0)*ITEM_LBS[k]; return Math.round(w*10)/10; }
+function packTypesUsed(){ let n=0; for(const k in ITEM_LBS) if((player[k]||0)>0) n++; return n; }
+function canCarry(addLbs, newTypes){                 // null = fits; else the reason it doesn't
+  if(packWeight()+addLbs > carryCap()+1e-9) return 'Your pack is too heavy!';
+  if(newTypes>0 && packTypesUsed()+newTypes > packSlots()) return 'No room in your pack!';
+  return null;
+}
+function packRefuse(msg){                            // show the refusal (rate-limited so it can't spam)
+  if((player._packMsgT||0)>0) return;
+  player._packMsgT=1.4; addFloat(msg, player.px, player.py-CELL*1.9, '#e2a24a');
+}
 let scene = 'title';                      // 'title' -> 'tavern' (character select) -> 'game'
 let tavernSeats = [];                     // per-frame hit boxes for the seated heroes
 let playAgainBtn = null;                  // hit box for the death-screen "Play Again" button
@@ -1480,6 +1499,12 @@ const ARMOR_ITEMS = [
   { key:'helmet',   name:'Leather Helmet',   cost:3, cur:'skins', prot:1, verb:'bought', btn:'Buy', give(){ player.helmet=1; player.eqHelmet=0; },   has(){ return player.helmet>0; },   owned(){ return player.helmet? 'owned':''; } },   // carried, not worn — put it on in the pack
   { key:'armor',    name:'Leather Armor',    cost:6, cur:'skins', prot:2, verb:'bought', btn:'Buy', give(){ player.armor=1; player.eqArmor=0; },    has(){ return player.armor>0; },    owned(){ return player.armor? 'owned':''; } },
   { key:'leggings', name:'Leather Leggings', cost:5, cur:'skins', prot:1, verb:'bought', btn:'Buy', give(){ player.leggings=1; player.eqLeggings=0; }, has(){ return player.leggings>0; }, owned(){ return player.leggings? 'owned':''; } },
+  { key:'packM', name:'Medium Pack', cost:500, cur:'guld', verb:'bought', btn:'Buy', eff:'12 slots',
+    has(){ return player.pack==='medium'||player.pack==='large'; }, give(){ player.pack='medium'; },
+    owned(){ return player.pack==='medium'?'carried':player.pack==='large'?'outgrown':''; } },
+  { key:'packL', name:'Large Pack', cost:2000, cur:'guld', verb:'bought', btn:'Buy', eff:'16 slots',
+    has(){ return player.pack==='large'; }, give(){ player.pack='large'; },
+    owned(){ return player.pack==='large'?'carried':''; } },
 ];
 const BUTCHER_ITEMS = [
   { key:'jerky', name:'Venison Jerky', cost:1, cur:'meat', btn:'Smoke', verb:'smoked', costText:'1 Deer Meat',
@@ -1496,6 +1521,8 @@ const shopUI = { open:false, title:'Weapon Shop', items:SHOP_ITEMS };
 function openShopUI(title, items){ shopUI.open=true; shopUI.title=title; shopUI.items=items; shop.msg=''; shop.msgT=0; }
 function craftItem(it){                             // buy an item, paid in its currency (wood by default, skins for armor)
   if(it.has && it.has()){ shop.msg='Already owned'; shop.msgT=2.5; return; }   // single-instance items
+  if(ITEM_LBS[it.key]!=null && !(player[it.key]>0) && packTypesUsed()+1>packSlots()){   // a NEW kind of item needs a free pack slot
+    shop.msg='No room in your pack! ('+packTypesUsed()+'/'+packSlots()+' slots)'; shop.msgT=2.5; return; }
   if(it.can && it.pay){                             // forge work: custom costs (iron + silver)
     if(it.can()){ it.pay(); it.give(); shop.msg=it.name+' '+(it.verb||'forged')+'!'; shop.msgT=2.5; }
     else { shop.msg=it.fail?it.fail():'Not enough materials'; shop.msgT=2.5; }
@@ -1658,10 +1685,13 @@ function updateCarcass(dt){
   if(!d || !d.dead || d.gone || (d.deadT||0)>=DEER_FRESH_T){ player.carcassTarget=null; return true; }   // rotted to bones — too late
   const dist=Math.hypot((player.px-d.px)/CELL, (player.py-d.py)/CELL);
   if(dist<=1.7){
+    const n=d.antlers?3:d.fawn?1:2, m2=d.antlers?3:d.fawn?1:2;
+    const err=canCarry(n*ITEM_LBS.skins+m2*ITEM_LBS.meat, (player.skins>0?0:1)+((player.meat||0)>0?0:1));
+    if(err){ packRefuse(err); player.carcassTarget=null; player.path=[]; return true; }   // the carcass keeps — come back lighter
     player.path=[]; player.targetCell=null; player.face=face8(d.px-player.px, d.py-player.py);
-    const n=d.antlers?3:d.fawn?1:2; player.skins+=n; addFloat('+'+n+' skins', player.px, player.py-CELL*1.9, '#c98a52');   // skin the carcass
-    const m=d.antlers?3:d.fawn?1:2; player.meat=(player.meat||0)+m;                  // dress the carcass — raw venison for the butcher
-    addFloat('+'+m+' Deer Meat', player.px, player.py-CELL*1.5, '#d96a55');
+    player.skins+=n; addFloat('+'+n+' skins', player.px, player.py-CELL*1.9, '#c98a52');   // skin the carcass
+    player.meat=(player.meat||0)+m2;                                                 // dress the carcass — raw venison for the butcher
+    addFloat('+'+m2+' Deer Meat', player.px, player.py-CELL*1.5, '#d96a55');
     spawnBlood(d.px, d.py-CELL*0.3, 14, true);
     d.deadT=DEER_FRESH_T;                             // looted — the stripped carcass is now a skeleton (rots away as normal)
     if(typeof net!=='undefined' && net.mode==='guest' && d.nid) netSend({t:'loot', map:mapMode, nid:d.nid});   // tell the host this carcass was looted
@@ -1821,6 +1851,7 @@ function updateCombat(dt){
   if(player.harvestTarget!=null){ if(!updateHarvest(dt)) return; }   // heading to / reaping wheat
   if(player.propTarget){ if(!updatePunch(dt)) return; }   // heading to / punching a crate
   if(player.swingCD==null) player.swingCD=0;         // belt & braces: never let the cooldown gate start undefined
+  if(player._packMsgT>0) player._packMsgT-=dt;
   if(player.swingCD>0) player.swingCD-=dt;           // the weapon's rhythm lives on the PLAYER — retargeting can't reset it
   const A=player.attack; if(!A) return;
   if(creatureDead(A.kind, A.ref)){ player.attack=null; return; }
@@ -1891,6 +1922,8 @@ function updateMine(dt){
       color: r.type==='silver'?'#aab4be':'#7d6a58'}); }
   const need=r.type==='silver'?25:10;              // silver is stubborn: 25s vs iron's 10s
   if(player.mineT>=need){
+    const err=canCarry(5*(r.type==='silver'?ITEM_LBS.silver:ITEM_LBS.iron), r.type==='silver'?((player.silver||0)>0?0:1):((player.iron||0)>0?0:1));
+    if(err){ packRefuse(err); player.mineRock=null; player.mineT=0; return; }   // the vein keeps — the ore stays in the rock
     r.gone=true; if(world.rockBlock) world.rockBlock.delete(gi(r.x,r.y));
     if(r.type==='silver'){ player.silver+=5; addFloat('+5 silver', player.px, player.py-CELL*1.6, '#c8d2dc'); }
     else { player.iron+=5; addFloat('+5 iron', player.px, player.py-CELL*1.6, '#b9885c'); }
@@ -1908,7 +1941,10 @@ function updateChop(dt){
   player.chopping=true; player.chopT+=dt;
   // a swing lands about once a second — burst of chips on each hit
   player.chipT-=dt; if(player.chipT<=0){ player.chipT=1.0; for(let i=0;i<7;i++) spawnChip((tree.x+1.5)*CELL, (tree.y+2.4)*CELL); }
-  if(player.chopT>=CHOP_TIME){ startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi); player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
+  if(player.chopT>=CHOP_TIME){
+    const err=canCarry(5*ITEM_LBS.wood, player.wood>0?0:1);
+    if(err){ packRefuse(err); player.chopTree=null; player.chopping=false; player.chopT=0; return; }   // too laden to haul the timber — the tree stands
+    startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi); player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
 }
 function fellTree(tree, fromWX){                     // topple a tree away from `fromWX`
   const dir = fromWX < (tree.x+1.5)*CELL ? 1 : -1;
@@ -4120,6 +4156,9 @@ function updateHarvest(dt){
   const px=(bx+TILE/2)*CELL, py=(by+TILE/2)*CELL;                     // the plot's centre — one reap gathers the whole tile
   const dist=Math.hypot((player.px-px)/CELL, (player.py-py)/CELL);
   if(dist<=2.3){
+    let est=0; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const cc=world.crops.get(gi(bx+dx,by+dy)); if(cc && cc.stage==='wheat') est++; }
+    const err=canCarry(Math.ceil(est/3)*ITEM_LBS.wheat, (player.wheat||0)>0?0:1);
+    if(err){ packRefuse(err); player.harvestTarget=null; player.path=[]; return true; }   // the wheat stands until you can carry it
     player.path=[]; player.targetCell=null; player.face=face8(px-player.px, py-player.py);
     let n=0;
     for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const cc=world.crops.get(gi(bx+dx,by+dy));
@@ -4182,6 +4221,10 @@ function drawShopItemIcon(key, x, y, s){            // x,y = icon centre
     rect(x-s*0.46,y-s*0.34,s*0.14,s*0.3,'#8a949e'); rect(x+s*0.32,y-s*0.34,s*0.14,s*0.3,'#8a949e');
     ctx.fillStyle='#727c86'; for(let ry=0;ry<3;ry++)for(let rx=-1;rx<=1;rx++) circle(x+rx*s*0.16, y-s*0.14+ry*s*0.18, s*0.045, '#727c86');
     return; }
+  if(key==='packM'||key==='packL'){ const s2=key==='packL'?s*1.2:s;                    // a leather pack
+    rect(x-s2*0.4, y-s2*0.26, s2*0.8, s2*0.62, '#8a5a34');
+    rect(x-s2*0.4, y-s2*0.4, s2*0.8, s2*0.26, '#6e4526');
+    circle(x, y+s2*0.04, s2*0.08, '#e7c877'); return; }
   if(key==='mweapon'){ circle(x,y,s*0.8,'rgba(90,140,255,.28)'); drawShopItemIcon('club',x,y,s*0.85); return; }
   if(key==='mweapon2'){ circle(x,y,s*0.85,'rgba(255,150,50,.35)'); drawShopItemIcon('club',x,y,s*0.85); return; }
   if(key==='marmor'){ circle(x,y,s*0.8,'rgba(90,140,255,.28)'); drawShopItemIcon('armor',x,y,s*0.85); return; }
@@ -4401,7 +4444,12 @@ function drawInvUI(){
   ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(L.px,L.py,L.pw,L.ph);
   ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
   ctx.font='bold '+Math.round(Math.max(18, L.headH*0.42))+'px system-ui, sans-serif';
-  ctx.fillText('Inventory', L.px+L.pad, L.py+L.headH*0.5);
+  ctx.fillText(packName(), L.px+L.pad, L.py+L.headH*0.5);
+  const _pnw=ctx.measureText(packName()).width, _w=packWeight(), _cap=carryCap(), _u=packTypesUsed(), _s=packSlots();
+  ctx.font=Math.round(Math.max(12, L.headH*0.26))+'px system-ui, sans-serif';
+  ctx.fillStyle=(_w>_cap||_u>=_s)?'#e2493a':PAL.shopWall;
+  ctx.fillText(_w+' / '+_cap+' lbs   \u00b7   '+_u+' / '+_s+' slots', L.px+L.pad+_pnw+Math.max(12,L.headH*0.3), L.py+L.headH*0.52);
+  ctx.fillStyle=PAL.panelHi;
   // hero, centered between the slot columns
   const sv=cam.scale, sf=player.face; cam.scale=L.hero.u/CELL; player.face='S';
   drawPerson({x:L.hero.x, y:L.hero.y}); cam.scale=sv; player.face=sf;
@@ -4802,6 +4850,7 @@ function loop(ts){
     updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt);
     if(mapMode==='dungeon' && world.pickups){ for(const pk2 of world.pickups){ if(pk2.taken) continue;
       if(Math.hypot(player.px-(pk2.x+0.5)*CELL, player.py-(pk2.y+0.5)*CELL)<CELL*1.2){
+        const err=canCarry(ITEM_LBS.pickaxe, player.pickaxe>0?0:1); if(err){ packRefuse(err); continue; }
         pk2.taken=true; player.pickaxe=1; addFloat('+ Pickaxe!', player.px, player.py-CELL*1.9, '#cfd6de');
         netSend({t:'pick', map:mapMode, i:world.pickups.indexOf(pk2)}); } } }
     for(const t2 of turtles) updateTurtle(t2, dt);   // local ambience the host doesn't stream: turtles bask & dive…
@@ -4822,6 +4871,7 @@ function loop(ts){
   if(mapMode==='dungeon' && world.pickups){                       // a pickaxe on the floor is yours for the taking
     for(const pk2 of world.pickups){ if(pk2.taken) continue;
       if(Math.hypot(player.px-(pk2.x+0.5)*CELL, player.py-(pk2.y+0.5)*CELL)<CELL*1.2){
+        const err=canCarry(ITEM_LBS.pickaxe, player.pickaxe>0?0:1); if(err){ packRefuse(err); continue; }
         pk2.taken=true; player.pickaxe=1; addFloat('+ Pickaxe!', player.px, player.py-CELL*1.9, '#cfd6de');
         if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'pick', map:mapMode, i:world.pickups.indexOf(pk2)}); } } }
   fishTimer-=dt; if(fishTimer<=0){ fishTimer=6+Math.random()*8; if(mapMode==='forest') spawnFishAtDeep(); }   // fish jump (2x more likely)
@@ -4971,7 +5021,7 @@ requestAnimationFrame(loop);
 
 /* --- character select: the tavern is drawn on the canvas (drawTavern); this wires the
        confirmation dialog (still a small DOM modal) and the title -> tavern transition. --- */
-const RACE_BLURB={ human:'Versatile and balanced.', dwarf:'Short, thick and strong.', halfling:'Small and nimble.', halforc:'Big, brawny and fierce.', elf:'Tall, slender and swift.' };
+const RACE_BLURB={ human:'Versatile and balanced. Carries 100 lbs.', dwarf:'Short, thick and strong. Carries 125 lbs.', halfling:'Small and nimble. Carries 75 lbs.', halforc:'Big, brawny and fierce. Carries 150 lbs.', elf:'Tall, slender and swift. Carries 100 lbs.' };
 const faceSrc=(k)=>(typeof RACE_FACES!=='undefined' && RACE_FACES[k] && RACE_FACES[k].src) || '';
 let _raceModal=null, _mImg=null, _mName=null, _mBlurb=null, _mQ=null, _pendingRace=null;
 function initTavernUI(){
@@ -5026,7 +5076,7 @@ function startAsRace(k){ player.race=k; closeRaceModal(); resetPlayerStats(); sc
 function resetPlayerStats(){                         // fresh start: full HP, starting kit, cleared state
   const rs=RACE_STATS[player.race]||RACE_STATS.human;   // race sets max hearts + move speed
   player.hpMax=rs.hpMax; player.speedMul=rs.speed;
-  player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false; player.swingCD=0;
+  player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false; player.swingCD=0; player.pack='small'; player._packMsgT=0;
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
@@ -5069,6 +5119,7 @@ function startGodMode(){                    // testing loadout: a human with eve
   player.speedMul=4;                                                       // 4x a human's pace
   player.freeCam=true;                                                     // and an untethered lens: pan & zoom without limits
   player.club=1; player.bow=1; player.longbow=1; player.sword=1; player.gaxe=1;      // every weapon in the game…
+  player.pack='large';                                                     // and the biggest pack made
   player.helmet=1; player.armor=1; player.leggings=1; player.chainmail=1;             // …and every piece of armor
   player.equipMelee='gaxe'; player.equipRanged='longbow';                             // best of each equipped
   player.eqHelmet=1; player.eqLeggings=1; player.eqChainmail=1; player.eqArmor=0;     // chain on the body (leather in the pack)
