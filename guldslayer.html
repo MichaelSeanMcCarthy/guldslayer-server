@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-24 · h';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-24 · i';   // shown on the title screen — bump the letter on every deploy
 const GRID = 300;         // cells per side — tiles read as 3m squares; internally each cell stays 1m
 const TILE = 3;           // cells per tile — one 3m tile holds at most ONE object (a tree, a bush, …)
 const CELL = 40;          // world units per cell
@@ -807,7 +807,7 @@ const player = {
   eqHelmet: 1, eqArmor: 1, eqLeggings: 1,            // armor worn-state (owned pieces are worn unless unequipped)
   magic: {club:0, bow:0, longbow:0, sword:0, gaxe:0, helmet:0, armor:0, leggings:0, chainmail:0}, witchEye: 0,   // per-item altar boosts (0 / 0.2 / 1.0) + Eye of the Witch drops
   tool: null, chopTree: null, chopping: false, chopT: 0, chipT: 0, wood: 10, club: 0, bow: 1, arrows: 10, hoe: 0, seeds: 0, wheat: 0, meat: 0, jerky: 0, meal: 0, skins: 0, helmet: 0, armor: 0, leggings: 0, goShop: false, goStall: false, goArmor: false, attack: null, stamina: 100, propTarget: null, punchT: 0,
-  dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0
+  dead: false, deadT: 0, hurtT: 0, spewT: 0, harvestTarget: null, repathH: 0, swingCD: 0
 };
 // playable races: body shape (sc=overall size, tw=width/thickness, hh=height proportion) + head look.
 // All wear the same clothes (PAL.playerBody/Legs); only body shape, skin, hair, ears/beard/tusks change.
@@ -1817,6 +1817,7 @@ function updateCombat(dt){
   if(player.carcassTarget){ if(!updateCarcass(dt)) return; }   // heading to / harvesting a carcass
   if(player.harvestTarget!=null){ if(!updateHarvest(dt)) return; }   // heading to / reaping wheat
   if(player.propTarget){ if(!updatePunch(dt)) return; }   // heading to / punching a crate
+  if(player.swingCD==null) player.swingCD=0;         // belt & braces: never let the cooldown gate start undefined
   if(player.swingCD>0) player.swingCD-=dt;           // the weapon's rhythm lives on the PLAYER — retargeting can't reset it
   const A=player.attack; if(!A) return;
   if(creatureDead(A.kind, A.ref)){ player.attack=null; return; }
@@ -4994,7 +4995,7 @@ function startAsRace(k){ player.race=k; closeRaceModal(); resetPlayerStats(); sc
 function resetPlayerStats(){                         // fresh start: full HP, starting kit, cleared state
   const rs=RACE_STATS[player.race]||RACE_STATS.human;   // race sets max hearts + move speed
   player.hpMax=rs.hpMax; player.speedMul=rs.speed;
-  player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false;
+  player.hp=player.hpMax; player.dead=false; player.deadT=0; player.hurtT=0; player.dmgT=0; player.lostHp=0; player.spewT=0; player.starveHp=0; player.freeCam=false; player.swingCD=0;
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
