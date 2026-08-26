@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-26 · c';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-26 · d';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -4583,8 +4583,8 @@ function draw(){
   if(shop.placed) items.push({wx:(shop.x+shop.w/2)*CELL, wy:(shop.y+shop.h)*CELL, kind:9});   // shop billboard, anchored at its front wall
   for(const s2 of (world.sites||[])) items.push({wx:(s2.tx*TILE+BUILDINGS[s2.kind].tiles*TILE/2)*CELL, wy:(s2.ty*TILE+BUILDINGS[s2.kind].tiles*TILE)*CELL, kind:29, ref:s2});   // build sites
   for(const b2 of (world.bags||[])) items.push({wx:(b2.x+0.5)*CELL, wy:(b2.y+1)*CELL, kind:30, ref:b2});   // dropped bags
-  if(stall.placed) items.push({wx:(stall.x+stall.w/2)*CELL, wy:(stall.y+stall.h)*CELL, kind:13});   // seed stall
-  if(butcher.placed) items.push({wx:(butcher.x+butcher.w/2)*CELL, wy:(butcher.y+butcher.h)*CELL, kind:28});   // butcher's stall
+  if(stall.placed) items.push({wx:(stall.x+stall.w/2+0.5)*CELL, wy:(stall.y+stall.h+0.5)*CELL, kind:13});   // seed stall — half a cell over so the 2x2 sits centred in its 3-cell tile
+  if(butcher.placed) items.push({wx:(butcher.x+butcher.w/2+0.5)*CELL, wy:(butcher.y+butcher.h+0.5)*CELL, kind:28});   // butcher's stall — likewise centred
   if(armorShop.placed) items.push({wx:(armorShop.x+armorShop.w/2)*CELL, wy:(armorShop.y+armorShop.h)*CELL, kind:14});   // armor shop
   for(const p of world.shopProps) items.push({wx:(p.x+0.5)*CELL, wy:(p.y+0.9)*CELL, kind:11, ref:p});   // barrels & crates
   for(const [key,c] of world.crops){ if(c.stage==='wheat'){ const x=key%GRID, y=(key/GRID)|0;
