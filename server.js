@@ -83,4 +83,15 @@ setInterval(()=>{                        // drop half-dead phone connections so 
 
 setInterval(()=>{ const s=GAME.stats(); if(s.sockets) console.log('[guldslayer]', JSON.stringify(s)); }, 60000);
 
+/* --- graceful shutdown: on redeploy/restart, CLOSE every player socket immediately so their
+       clients auto-reconnect to the NEW instance instead of lingering in this dying world. --- */
+function shutdown(sig){
+  console.log('[guldslayer]', sig, '— closing', wss.clients.size, 'player socket(s) and exiting');
+  try{ for(const ws of wss.clients){ try{ ws.close(1001, 'server restarting'); }catch(_){} } }catch(_){}
+  try{ server.close(); }catch(_){}
+  setTimeout(()=>process.exit(0), 600);
+}
+process.on('SIGTERM', ()=>shutdown('SIGTERM'));
+process.on('SIGINT',  ()=>shutdown('SIGINT'));
+
 server.listen(PORT, '0.0.0.0', ()=>console.log('[guldslayer] listening on port', PORT));

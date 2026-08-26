@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · t';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · u';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3825,7 +3825,7 @@ function drawGuldIcon(x, y, s){                // the GULD crystal: a tall facet
 function drawTimeHUD(){                        // the day dial: a 24-hour sky band with the sun (or moon) riding it
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
   const bw=Math.max(120, 130*DPR), bh=Math.max(10, 11*DPR);
-  const bx=canvas.width-pad-bw, by=pad+sz+ic*2.1;
+  const bx=canvas.width-pad-bw, by=pad+sz+ic*3.4;   // the day dial rides below the purse
   const h=dayHour(), frac=h/24;
   ctx.save();
   const grad=ctx.createLinearGradient(bx,0,bx+bw,0);           // midnight → dawn → noon → dusk → midnight
@@ -3897,7 +3897,7 @@ function drawMinimap(){
   if(!mmCanvas || mmFor!==mapMode) buildMinimap();
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
   const box=Math.max(140, 150*DPR);
-  const bx=canvas.width-pad-box, by=pad+sz+ic*3.6;
+  const bx=canvas.width-pad-box, by=pad+sz+ic*4.9;  // the minimap drops below the dial
   const PX=4, mmScale=(fitScale*15)/4*mmZoom;                  // the old default camera height, from 4x higher (± the +/- buttons)
   let pxPerCell=mmScale*CELL, viewCells=box/pxPerCell;
   if(viewCells>GRID){ viewCells=GRID; pxPerCell=box/viewCells; }   // fully zoomed out: the whole world fits the box
@@ -3946,7 +3946,7 @@ function mmButtonTap(x, y){                     // a tap on the minimap's +/- : 
 }
 function drawGuldHUD(){                        // your GULD purse, tucked under the portrait
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR);
-  const ic=Math.max(15, 17*DPR), y=pad+sz+ic*0.9;
+  const ic=Math.max(15, 17*DPR), y=pad+sz+ic*2.2;   // sits below the level bar now
   ctx.save(); ctx.textAlign='right'; ctx.textBaseline='middle';
   ctx.font='bold '+Math.round(ic*1.25)+'px system-ui, sans-serif';
   const label=(player.guld||0).toLocaleString('en-US');
@@ -4451,21 +4451,20 @@ function drawStamina(){                            // stamina meter under the he
     ctx.textAlign='left'; ctx.fillText('+'+Math.ceil(player.digestHp)+' HP', bx+bw+r*0.7, y+DPR*0.5); }
   ctx.restore();
 }
-function drawLevelBar(){                           // "Lv N" + a slim XP bar; gold + CAP when cap-locked
-  const r=Math.max(9, 11*DPR), y=r*6.7, bx=r*3.7, bw=r*10.5, bh=r*0.75;
+function drawLevelBar(){                           // level + XP, tucked right under the portrait (top-right)
+  const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
+  const bw=sz*1.35, bh=ic*0.62, bx=canvas.width-pad-bw, by=pad+sz+ic*0.55;
   const lv=player.level||1, capped=lv>=RELEASE.capLevel;
-  ctx.save();
-  ctx.fillStyle='#ffd44d'; ctx.font='bold '+Math.round(r*1.2)+'px system-ui, sans-serif';
-  ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.fillText('Lv '+lv, r*1.15, y);
-  rect(bx, y-bh/2, bw, bh, PAL.shadow);                          // empty track
+  ctx.save(); ctx.textBaseline='middle';
+  ctx.fillStyle='#ffd44d'; ctx.font='bold '+Math.round(ic*0.95)+'px system-ui, sans-serif';
+  ctx.textAlign='right'; ctx.fillText('Lv '+lv, bx-ic*0.45, by+bh/2);
+  rect(bx, by, bw, bh, PAL.shadow);                              // empty track
   const need=capped?1:xpForLevel(lv);
   const frac=capped?1:Math.max(0,Math.min(1,(player.xp||0)/need));
-  rect(bx, y-bh/2, bw*frac, bh, capped?'#c9a23a':'#6fb7ff');     // fill: sky-blue XP, gold at the cap
-  ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(bx, y-bh/2, bw, bh);
-  ctx.fillStyle=capped?'#ffe9a8':'#dfeeff'; ctx.font='bold '+Math.round(r*0.8)+'px system-ui, sans-serif';
-  ctx.textAlign='center';
-  ctx.fillText(capped ? 'CAP — finish the map' : (player.xp||0)+' / '+need+' XP', bx+bw/2, y+DPR*0.5);
+  rect(bx, by, bw*frac, bh, capped?'#c9a23a':'#6fb7ff');         // fill: sky-blue XP, gold at the cap
+  ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(bx, by, bw, bh);
+  ctx.fillStyle=capped?'#ffe9a8':'#dfeeff'; ctx.font='bold '+Math.round(ic*0.6)+'px system-ui, sans-serif';
+  ctx.textAlign='center'; ctx.fillText(capped ? 'CAP' : (player.xp||0)+' / '+need, bx+bw/2, by+bh/2+DPR*0.5);
   ctx.restore();
 }
 function drawInventory(){
@@ -4474,7 +4473,7 @@ function drawInventory(){
   if(!player.wood && !player.arrows && !player.skins && !player.wheat && !player.meat && !player.souls && !player.witchEye && !player.goblinKey && !player.iron && !player.silver && !party.length) return;
   const r=Math.max(9, 11*DPR), x=r*1.6, ic=r*1.5;
   ctx.save(); ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.font='bold '+Math.round(r*1.7)+'px system-ui, sans-serif';
-  let y=r*8.6;                                     // gap below the stamina meter + level bar before resources begin
+  let y=r*7.8;                                     // gap below the stamina meter before resources begin (the level bar lives top-right now)
   for(const R2 of party){                          // each friend's portrait + hearts, above the resources
     const ps=ic*2.3;
     const im=(typeof RACE_FACES!=='undefined' && RACE_FACES[R2.race]) || (typeof hudFace!=='undefined'?hudFace:null);
@@ -6562,11 +6561,15 @@ function netOnData(m, fromClient){
   const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
   if(MAP_FX[m.t] && m.map && m.map!==mapMode) return;   // effects on a map we're not looking at
-  if(m.t==='wel'){ if(mapMode==='dungeon') mapMode='forest'; savedDungeon=null; savedForest=null;
+  if(m.t==='wel'){ const prevSeed=(typeof worldSeed!=='undefined')?(worldSeed>>>0):null; const wasPlaying=(scene==='game');
+    if(mapMode==='dungeon') mapMode='forest'; savedDungeon=null; savedForest=null;
     net.myId=m.id||1; worldSeed=(m.seed>>>0); generateWorld(); netClearWorldForGuest();
     spawnTurtles();                                   // turtles are ambience — each screen keeps its own basking in the shallows
     if(m.cv) setCaveUnlocked();
-    net.gotSeed=true; mpEnterTavern(); }
+    net.gotSeed=true;
+    if(wasPlaying){                                   // a mid-game reconnect: stay IN the game — no tavern, no re-pick
+      if(prevSeed===null || (m.seed>>>0)!==prevSeed) placePlayerStart();   // the server was reborn with a new world — start fresh ground
+    } else mpEnterTavern(); }
   else if(m.t==='snap'){ if(net.mode==='guest'){
     if(m.wt!=null) worldTime=m.wt;                    // one sun for the whole party
     if(m.players) net.remotes=m.players.filter(p2=>p2.id!==net.myId);
@@ -6610,6 +6613,8 @@ function netOnData(m, fromClient){
       if(n) spawnHarvestFX((x0+TILE/2)*CELL,(y0+TILE/2)*CELL); } } }
 }
 function netUpdate(dt){
+  if(net.mode==='guest' && net.connected && net.serverUrl && net._lastMsgT && Date.now()-net._lastMsgT>9000){
+    net._lastMsgT=Date.now(); try{ if(net.ws) net.ws.close(); }catch(e){} }   // watchdog: a silent socket is a dead socket — force the reconnect
   if(net.mode==='off' || !net.connected) return;
   net.outT-=dt; if(net.outT>0) return; net.outT=1/20;
   if(net.mode==='host'){ const sn=buildSnap(); sn.map=mapMode; sn.hostMap=mapMode; netSend(sn); } else netSend(buildMe());
@@ -6652,9 +6657,13 @@ function wireClient(c){                                // HOST: a new player is 
 }
 function wireConn(c){                                  // GUEST: our one line to the host
   net.conn=c;
-  c.on('open', ()=>{ net.connected=true; if(net.openTimer){ clearTimeout(net.openTimer); net.openTimer=null; } });
+  c.on('open', ()=>{ net.connected=true; if(net.openTimer){ clearTimeout(net.openTimer); net.openTimer=null; }
+    if(net._auto){ net._auto=false; net._recDelay=0;
+      if(scene==='game') addFloat('Reconnected!', player.px, player.py-CELL*2.4, '#8fd07a'); } });
   c.on('data', (m)=>netOnData(m, null));
-  c.on('close', ()=>{ net.connected=false; mpStatus('Lost the connection to the host.'); });
+  c.on('close', ()=>{ net.connected=false;
+    if(net.serverUrl && scene==='game'){ const u=net.serverUrl; netReset(); net.serverUrl=u; scheduleReconnect(); }   // a server link mid-game heals itself
+    else mpStatus('Lost the connection to the host.'); });
   c.on('error', e=>{ mpStatus('Link error: '+((e&&e.type)||e)); });
 }
 /* --- multiplayer plumbing: on-demand PeerJS loader + ICE (relay) config.
@@ -6682,19 +6691,38 @@ const SERVER_URL='wss://guldslayer-server-production.up.railway.app';   // the a
 function netJoinWS(url){                                 // join an always-on dedicated server over a plain WebSocket
   if(net.mode!=='off') return;
   url=(url||'').trim(); if(!url) return;
-  net.mode='guest'; net.code=''; mpStatus('Connecting to the server…');
+  net.mode='guest'; net.code=''; net.serverUrl=url; mpStatus('Connecting to the server…');
   let ws; try{ ws=new WebSocket(url); }catch(err){ mpStatus('Couldn’t reach the server: '+err.message); netReset(); return; }
   const handlers={};                                     // a PeerJS-conn-shaped shim around the raw socket
   const conn={ open:false,
     send:m=>{ try{ ws.send(JSON.stringify(m)); }catch(e){} },
     on:(ev,cb)=>{ handlers[ev]=cb; },
     close:()=>{ try{ ws.close(); }catch(e){} } };
-  ws.onopen   =()=>{ conn.open=true;  if(handlers.open) handlers.open(); };
-  ws.onmessage=e=>{ let m=null; try{ m=JSON.parse(e.data); }catch(_){ return; } if(handlers.data) handlers.data(m); };
+  ws.onopen   =()=>{ conn.open=true;  net._lastMsgT=Date.now(); if(handlers.open) handlers.open(); };
+  ws.onmessage=e=>{ net._lastMsgT=Date.now(); let m=null; try{ m=JSON.parse(e.data); }catch(_){ return; } if(handlers.data) handlers.data(m); };
   ws.onclose  =()=>{ conn.open=false; if(handlers.close) handlers.close(); };
   ws.onerror  =()=>{ if(!net.connected){ mpStatus('Couldn’t reach the server — is it running? Check the address.'); } };
   net.ws=ws; wireConn(conn);
   netArmTimeout(15, 'Couldn’t reach the server. Check the address and your connection, then try again.');
+}
+/* --- resilience: server restarts (every deploy restarts it!) and half-dead sockets must not strand a
+       player in a frozen, private copy of the world. On ANY loss of a dedicated-server link mid-game,
+       quietly rejoin the same address — the fresh 'wel' + extras rebuild the world and the party reunites
+       on the CURRENT server instance. --- */
+function scheduleReconnect(){
+  const url=net.serverUrl; if(!url || net._recTimer || scene!=='game') return;
+  net._recDelay = net._recDelay ? Math.min(10000, net._recDelay*1.7) : 1200;
+  addFloat('Connection lost — reconnecting…', player.px, player.py-CELL*2.6, '#e0c060');
+  net._recTimer=setTimeout(()=>{
+    net._recTimer=null;
+    if(net.connected){ net._recDelay=0; return; }        // already back by some other path
+    if(net.mode!=='off') netReset();
+    net.serverUrl=url; net._auto=true;
+    netJoinWS(url); net.serverUrl=url;
+    clearTimeout(net._recGuard);
+    net._recGuard=setTimeout(()=>{ if(!net.connected && scene==='game'){   // that attempt died quietly — go again
+      if(net.mode!=='off') netReset(); net.serverUrl=url; scheduleReconnect(); } }, 13000);
+  }, net._recDelay);
 }
 async function openRelayCreds(){                         // time-limited credentials for the free Open Relay TURN fleet
   const username=String(Math.floor(Date.now()/1000)+12*3600);          // valid for 12 hours
@@ -6781,7 +6809,7 @@ function guestConnect(){                                 // (re)attempt the data
 
 /* --- title-screen menu (DOM overlay on #title): Create a Game / Join a Game --- */
 let _mpStatusEl=null, _mpBeginRow=null, _mpCodeBadge=null, _mpMainRow=null;
-function mpStatus(msg){ if(_mpStatusEl) _mpStatusEl.textContent=msg; }
+function mpStatus(msg){ if(net._auto && scene==='game') return; if(_mpStatusEl) _mpStatusEl.textContent=msg; }   // silent while auto-reconnecting mid-game
 function mpShowCode(code){
   if(_mpStatusEl) _mpStatusEl.innerHTML='Your game code: <b style="letter-spacing:.18em;color:#ffe08a;font-size:18px">'+code+'</b><br>'+
     '<span style="opacity:.85">Share it with a friend so they can join — or just press Begin to start.</span>';
