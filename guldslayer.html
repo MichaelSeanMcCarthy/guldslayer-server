@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · v';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · w';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2370,7 +2370,17 @@ const trade={ open:false, pid:0, joined:false, mine:{}, theirs:{}, mySeq:0, thei
               myAcc:false, theirAcc:false, myReady:false, theirReady:false, done:false, msg:'', msgT:0 };
 function findRemote(pid){ for(const p of remotePlayers()){ if((p.id|0)===(pid|0)) return p; } return null; }
 function partnerName(pid){ const p=findRemote(pid); return p&&RACES[p.race] ? RACES[p.race].name : 'Traveler'; }
+/* Skill cards trade too — but only ones NOT currently in use (in Memory, untrained). A card rides the
+   wire as 'card:<id>:<tier>'; the receiver gets it through grantCard, so the one-of-each rule holds:
+   a better copy upgrades theirs, a worse one salvages into GULD. Cards weigh nothing and take no pack room. */
+function tradeIsCard(k){ return typeof k==='string' && k.indexOf('card:')===0; }
+function tradeKeyName(k){ if(tradeIsCard(k)){ const p=k.split(':');
+    return (CARDS[p[1]]?CARDS[p[1]].name:'Card')+' · '+CARD_TIERS[+p[2]].name+' card'; }
+  return TRADE_NAMES[k]||k; }
+function tradeKeyColor(k, fallback){ if(tradeIsCard(k)) return CARD_TIERS[+k.split(':')[2]].col; return fallback; }
 function tradeAvail(k){                            // how many of k can go on the table (equipped gear stays home)
+  if(tradeIsCard(k)){ const p=k.split(':'), c=player.cards&&player.cards[p[1]];
+    return (c && !c.trained && c.tier===+p[2] && !trade.mine[k]) ? 1 : 0; }   // only an unused card, once
   if(k==='guld') return Math.max(0,(player.guld||0)-(trade.mine.guld||0));
   let n=player[k]||0;
   if(k===player.equipMelee) n--; if(k===player.equipRanged) n--;                  // the gear on your body isn't for sale
@@ -2381,11 +2391,13 @@ function tradeAvail(k){                            // how many of k can go on th
   return Math.max(0, n-(trade.mine[k]||0));
 }
 function tradeFits(){                              // could I hold what I'd walk away with?
+  for(const k in trade.mine){ if(tradeIsCard(k)){ const p=k.split(':'), c=player.cards&&player.cards[p[1]];
+    if(!c || c.trained || c.tier!==+p[2]) return 'A card in your offer is no longer free to trade'; } }
   let w=packWeight();
   const types=new Set(); for(const k in ITEM_LBS){ if((player[k]||0)>0) types.add(k); }
-  for(const k in trade.mine){ if(k==='guld') continue;
+  for(const k in trade.mine){ if(k==='guld'||tradeIsCard(k)) continue;
     w-=(ITEM_LBS[k]||0)*trade.mine[k]; if((player[k]||0)-trade.mine[k]<=0) types.delete(k); }
-  for(const k in trade.theirs){ if(k==='guld') continue;
+  for(const k in trade.theirs){ if(k==='guld'||tradeIsCard(k)) continue;
     w+=(ITEM_LBS[k]||0)*trade.theirs[k]; types.add(k); }
   if(w>carryCap()) return 'Too heavy — '+Math.round(w)+' / '+carryCap()+' lbs';
   if(types.size>packSlots()) return 'No pack room — '+types.size+' / '+packSlots()+' slots';
@@ -2424,10 +2436,14 @@ function tryTradeCommit(){                          // both said TRADE → verif
 function tryTradeFinish(){ if(trade.myReady && trade.theirReady) executeTrade(); }
 function executeTrade(){
   if(trade.done) return; trade.done=true;
-  for(const k in trade.mine)   player[k]=Math.max(0,(player[k]||0)-trade.mine[k]);
-  for(const k in trade.theirs) player[k]=(player[k]||0)+trade.theirs[k];
+  for(const k in trade.mine){
+    if(tradeIsCard(k)){ const id=k.split(':')[1]; if(player.cards) delete player.cards[id]; }   // the knowledge leaves your Mind
+    else player[k]=Math.max(0,(player[k]||0)-trade.mine[k]); }
+  for(const k in trade.theirs){
+    if(tradeIsCard(k)){ const p=k.split(':'); if(CARDS[p[1]]) grantCard(p[1], +p[2]); }         // arrives like any found card — one-of-each holds
+    else player[k]=(player[k]||0)+trade.theirs[k]; }
   addFloat('Trade complete!', player.px, player.py-CELL*2.3, '#ffd44d');
-  const got=Object.keys(trade.theirs).map(k=>'+'+trade.theirs[k]+' '+TRADE_NAMES[k]).join('  ');
+  const got=Object.keys(trade.theirs).filter(k=>!tradeIsCard(k)).map(k=>'+'+trade.theirs[k]+' '+tradeKeyName(k)).join('  ');
   if(got) addFloat(got, player.px, player.py-CELL*1.9, '#8fd07a');
   tradeReset();
 }
@@ -2524,17 +2540,24 @@ function drawTradeUI(){                             // the trade table: inventor
     ctx.fillText(TRADE_NAMES[k]+'  ×'+av+(k==='guld'?'  (+10)':''), c1, y);
     invRows.push({k, box:{x:c1-pad*0.3, y:y-rowh*0.5, w:colW+pad*0.5, h:rowh}});
     y+=rowh; }
+  for(const id in (player.cards||{})){ const cc=player.cards[id]; if(cc.trained) continue;   // unused skill cards trade too
+    const k='card:'+id+':'+cc.tier; if(tradeAvail(k)<=0) continue;
+    if(y>botY-rowh*0.4) break;
+    ctx.fillStyle=CARD_TIERS[cc.tier].col;
+    ctx.fillText(tradeKeyName(k), c1, y);
+    invRows.push({k, box:{x:c1-pad*0.3, y:y-rowh*0.5, w:colW+pad*0.5, h:rowh}});
+    y+=rowh; }
   if(!invRows.length){ ctx.fillStyle='#8f7f66'; ctx.fillText('Nothing to offer', c1, topY+rowh*1.35); }
   y=topY+rowh*1.35;
   for(const k in trade.mine){ if(y>botY-rowh*0.4) break;
-    ctx.fillStyle = k==='guld' ? '#ffd44d' : '#e8dcc0';
-    ctx.fillText(TRADE_NAMES[k]+'  ×'+trade.mine[k], c2, y);
+    ctx.fillStyle = k==='guld' ? '#ffd44d' : tradeKeyColor(k, '#e8dcc0');
+    ctx.fillText(tradeKeyName(k)+(tradeIsCard(k)?'':'  ×'+trade.mine[k]), c2, y);
     giveRows.push({k, box:{x:c2-pad*0.3, y:y-rowh*0.5, w:colW+pad*0.5, h:rowh}});
     y+=rowh; }
   y=topY+rowh*1.35;
   for(const k in trade.theirs){ if(y>botY-rowh*0.4) break;
-    ctx.fillStyle = k==='guld' ? '#ffd44d' : '#8fd07a';
-    ctx.fillText(TRADE_NAMES[k]+'  ×'+trade.theirs[k], c3, y);
+    ctx.fillStyle = k==='guld' ? '#ffd44d' : tradeKeyColor(k, '#8fd07a');
+    ctx.fillText(tradeKeyName(k)+(tradeIsCard(k)?'':'  ×'+trade.theirs[k]), c3, y);
     y+=rowh; }
   // footer: status + accept lights + the TRADE button
   const bw=Math.max(120,108*DPR), bh=Math.max(34,30*DPR);
