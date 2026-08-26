@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · w';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · x';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3940,6 +3940,18 @@ function drawMinimap(){
     if(RP.active && !RP.dead && (RP.map||'forest')===mapMode) dot(RP.px, RP.py, Math.max(2.5,3*DPR), '#6bd3ff'); }
   for(const g of goblins){ if(g.dead||g.gone) continue;
     if(g.kind==='boss'||g.kind==='king') dot(g.px, g.py, Math.max(3,3.5*DPR), '#d43a2a'); }    // the big threats
+  const sq=(wx,wy,r,col,hollow)=>{ const dx=bx+(wx/CELL-cx0)*pxPerCell, dy=by+(wy/CELL-cy0)*pxPerCell;
+    if(dx<bx-3||dx>bx+box+3||dy<by-3||dy>by+box+3) return;
+    if(hollow){ ctx.strokeStyle=col; ctx.lineWidth=Math.max(1.5,DPR*1.2); ctx.strokeRect(dx-r,dy-r,r*2,r*2); }
+    else { ctx.fillStyle=col; ctx.fillRect(dx-r,dy-r,r*2,r*2); } };
+  if(mapMode==='forest'){
+    for(const b of (world.builtBridges||[]))                                                   // player-built bridges: plank tan
+      sq((b[0]*TILE+1.5)*CELL, (b[1]*TILE+1.5)*CELL, Math.max(2,2.2*DPR), '#a97b48');
+    for(const B2 of [shop, stall, butcher, armorShop]){ if(!B2 || !B2.placed) continue;        // finished buildings: solid grey
+      sq((B2.x+(B2.w||3)/2)*CELL, (B2.y+(B2.h||3)/2)*CELL, Math.max(2.5,3*DPR), '#d6d6d6'); }
+    for(const s of (world.sites||[])){ const n2=BUILDINGS[s.kind].tiles*TILE;                  // build sites: hollow grey — still rising
+      sq((s.tx*TILE+n2/2)*CELL, (s.ty*TILE+n2/2)*CELL, Math.max(2.5,3*DPR), '#b8b8b8', true); }
+  }
   dot(player.px, player.py, Math.max(3,3.5*DPR), '#ffffff');                                   // you
   ctx.restore();
   ctx.save(); ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(2, DPR*1.8);
