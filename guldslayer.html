@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-26 · b';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-26 · c';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2626,6 +2626,7 @@ function dropAvail(k){                              // how many of k you could s
   if(k==='chainmail'&&player.eqChainmail&&player.chainmail) n--;
   return Math.max(0,n);
 }
+function bagCell(c){ return Math.max(1, Math.min(GRID-2, Math.floor(c/TILE)*TILE+1)); }   // snap to the middle cell of the 3-cell tile — bags sit dead-centre
 function bagAt(cx,cy){ for(const b of (world.bags||[])){ if(Math.abs(b.x-cx)<=1&&Math.abs(b.y-cy)<=1) return b; } return null; }
 function bagById(id){ return (world.bags||[]).find(b=>b.id===id); }
 function addBag(x,y,items){                         // authoritative (host / solo); drops on the same cell merge
@@ -2646,7 +2647,7 @@ function confirmDrop(){                             // the picker's DROP button
   const k=dropUI.k, n=Math.min(dropUI.n, dropAvail(k));
   if(!k || n<=0){ dropUI.open=false; return; }
   player[k]=Math.max(0,(player[k]||0)-n);
-  const cx=cellOf(player.px), cy=Math.min(GRID-2, cellOf(player.py)+1);   // set down a step in front of you
+  const cx=bagCell(cellOf(player.px)), cy=bagCell(cellOf(player.py)+1);   // set down a step in front of you, centred on the tile
   addFloat('Dropped '+n+' '+tradeKeyName(k), player.px, player.py-CELL*1.8, '#cfd6de');
   if(typeof net!=='undefined' && net.mode==='guest' && net.connected){
     world.bags=world.bags||[];                                            // optimistic — the next snap swaps in the host's copy
@@ -2813,18 +2814,11 @@ function bagUIClick(cx,cy){
 }
 /* ===== weather: rain and lightning =====
    The HOST rolls the storms, so every player shares the same sky. Rain darkens the world and streaks
-   the screen; every so often the storm throws a bolt near some unlucky player. Anything within reach
+   the screen; every so often a bolt lands somewhere random on the map. Anything within reach
    of the strike — player, deer, goblin — takes 100 damage THROUGH the normal armor pipeline (armor
    and Thick Hide soften it); a struck tree comes crashing down. The dungeon never sees weather. */
 const RAIN={ chancePerSec:1/300, minDur:60, maxDur:150, boltMin:7, boltMax:18, dmg:100 };
 const weather={ raining:false, t:0, boltT:0, wet:0, flash:0, bolt:null, drops:[] };
-function weatherAnchors(){                          // who the storm stalks: every active player out in the forest
-  const a=[];
-  if(!DEDICATED && !player.dead && mapMode==='forest' && scene==='game') a.push({px:player.px, py:player.py});
-  for(const p of (typeof remotePlayers==='function'?remotePlayers():[])){
-    if(p.active && !p.dead && (p.map||'forest')==='forest') a.push({px:p.px, py:p.py}); }
-  return a;
-}
 function startRain(){ weather.raining=true; weather.t=RAIN.minDur+Math.random()*(RAIN.maxDur-RAIN.minDur);
   weather.boltT=3+Math.random()*6; }
 function updateWeather(dt){                         // HOST / SOLO: the storm's own mind
@@ -2835,14 +2829,8 @@ function updateWeather(dt){                         // HOST / SOLO: the storm's 
   weather.boltT-=dt;
   if(weather.boltT<=0){ weather.boltT=RAIN.boltMin+Math.random()*(RAIN.boltMax-RAIN.boltMin); lightningStrike(); }
 }
-function lightningStrike(){                         // the host picks where the sky's anger lands
-  const anchors=weatherAnchors();
-  let x,y;
-  if(anchors.length && Math.random()<0.85){ const a=anchors[(Math.random()*anchors.length)|0];
-    const ang=Math.random()*Math.PI*2, r=Math.random()*CELL*24;                     // near SOMEONE — mostly misses, sometimes not
-    x=a.px+Math.cos(ang)*r; y=a.py+Math.sin(ang)*r; }
-  else { x=Math.random()*GRID*CELL; y=Math.random()*GRID*CELL; }
-  x=Math.max(0,Math.min(GRID*CELL-1,x)); y=Math.max(0,Math.min(GRID*CELL-1,y));
+function lightningStrike(){                         // the sky is indifferent — a bolt lands anywhere on the map
+  const x=Math.random()*GRID*CELL, y=Math.random()*GRID*CELL;
   boltLand(x,y);
   if(typeof net!=='undefined' && net.mode==='host' && net.connected)
     netSend({t:'bolt', map:'forest', x:Math.round(x), y:Math.round(y)});
@@ -7006,7 +6994,7 @@ function netOnData(m, fromClient){
   else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
   else if(m.t==='bagNew'){ if(net.mode==='host'){ const it2={};                                 // a guest set a bag down — sanitize and stake it
     for(const k2 in (m.items||{})){ if(DROPPABLE.indexOf(k2)>=0){ const v=m.items[k2]|0; if(v>0) it2[k2]=Math.min(v,99999); } }
-    if(Object.keys(it2).length) addBag(Math.max(0,Math.min(GRID-1,m.x|0)), Math.max(0,Math.min(GRID-1,m.y|0)), it2); } }
+    if(Object.keys(it2).length) addBag(bagCell(m.x|0), bagCell(m.y|0), it2); } }                // snapped to the tile centre on the host too
   else if(m.t==='bagTake'){ if(net.mode==='host'){ const b=bagById(m.id|0); if(b) bagTakeAuth(b, ''+m.key, Math.max(0,m.n|0)); } }
   else if(m.t==='siteNew'){ if(net.mode==='host') addSite(m.kind, m.tx|0, m.ty|0); }
   else if(m.t==='siteWood'){ if(net.mode==='host'){ const s=(world.sites||[]).find(x2=>x2.id===m.i); siteAddWood(s, Math.max(0, Math.min(50, m.n|0))); } }
