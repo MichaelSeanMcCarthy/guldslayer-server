@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · u';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · v';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -162,7 +162,7 @@ const CARDS={
   fleetfoot: { name:'Fleet Foot', dom:'movement',  base:0.10, txt:v=>'Walk '+Math.round(v*100)+'% faster' },
 };
 const TRAIN_SECS=5*60;                       // training-in: a newly slotted card pays nothing for 5 minutes
-const cardUI={ open:false, pulse:0 };
+const cardUI={ open:false, pulse:0, unseen:0 };     // unseen = cards gained since the Mind was last opened
 function gridSquares(){ return Math.min(25, 5+Math.floor((player.level||1)/5)); }   // 5 → 25 across the career
 function gridUsed(){ let u=0; for(const id in (player.cards||{})){ const c=player.cards[id]; if(c.trained) u+=CARD_TIERS[c.tier].sq; } return u; }
 function cardVal(id){                        // the live bonus of one card — 0 unless trained-in AND fed
@@ -176,9 +176,9 @@ function grantCard(id, tier){                // a card is FOUND: new → Memory;
   player.cards=player.cards||{};
   if(tier==null) tier=cardTierRoll();
   const have=player.cards[id], nm=CARDS[id].name, tn=CARD_TIERS[tier].name;
-  if(!have){ player.cards[id]={tier, trained:false, trainT:0}; cardUI.pulse=8;
+  if(!have){ player.cards[id]={tier, trained:false, trainT:0}; cardUI.pulse=8; cardUI.unseen=(cardUI.unseen||0)+1;
     addFloat('Card found: '+nm+' ('+tn+')!', player.px, player.py-CELL*2.5, CARD_TIERS[tier].col); }
-  else if(tier>have.tier){ have.tier=tier; cardUI.pulse=8;          // one of each card — a better copy replaces
+  else if(tier>have.tier){ have.tier=tier; cardUI.pulse=8; cardUI.unseen=(cardUI.unseen||0)+1;   // one of each card — a better copy replaces
     addFloat(nm+' improves to '+tn+'!', player.px, player.py-CELL*2.5, CARD_TIERS[tier].col); }
   else { player.guld=(player.guld||0)+25;                           // dead-weight duplicate → salvage
     addFloat('Duplicate '+nm+' salvaged: +25 GULD', player.px, player.py-CELL*2.5, '#cfd6de'); }
@@ -3898,7 +3898,7 @@ function drawMinimap(){
   const sz=Math.max(64, 88*DPR), pad=Math.max(10, 12*DPR), ic=Math.max(15, 17*DPR);
   const box=Math.max(140, 150*DPR);
   const bx=canvas.width-pad-box, by=pad+sz+ic*4.9;  // the minimap drops below the dial
-  const PX=4, mmScale=(fitScale*15)/4*mmZoom;                  // the old default camera height, from 4x higher (± the +/- buttons)
+  const PX=4, mmScale=(fitScale*15)/6*mmZoom;                  // zoomed out 50% further — half again more tiles in view (± the +/- buttons)
   let pxPerCell=mmScale*CELL, viewCells=box/pxPerCell;
   if(viewCells>GRID){ viewCells=GRID; pxPerCell=box/viewCells; }   // fully zoomed out: the whole world fits the box
   let cx0=cellOf(player.px)-viewCells/2, cy0=cellOf(player.py)-viewCells/2;
@@ -5200,7 +5200,7 @@ function drawBrainButton(){                            // the Mind — a little 
   if(invUI.open || shopUI.open || cardUI.open) return;
   const B=brainButtonBox(), cx=B.x+B.w/2, cy=B.y+B.h/2, s=B.w;
   ctx.save();
-  if(cardUI.pulse>0){ const p=0.5+0.5*Math.sin(animT*7);          // a fresh card calls for attention
+  if(cardUI.unseen>0){ const p=0.5+0.5*Math.sin(animT*7);         // an UNSEEN card calls for attention — until you look
     ctx.strokeStyle='rgba(255,212,77,'+(0.35+0.5*p)+')'; ctx.lineWidth=Math.max(3,DPR*2.5);
     ctx.beginPath(); ctx.arc(cx, cy, s*0.52, 0, Math.PI*2); ctx.stroke(); }
   ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=s*0.1; ctx.shadowOffsetY=s*0.05;
@@ -5213,10 +5213,9 @@ function drawBrainButton(){                            // the Mind — a little 
   ctx.beginPath(); ctx.arc(cx-s*0.14, cy-s*0.04, s*0.13, 0.4, 2.6); ctx.stroke();
   ctx.beginPath(); ctx.arc(cx+s*0.14, cy-s*0.04, s*0.13, 0.6, 2.8); ctx.stroke();
   rect(cx-s*0.10, cy+s*0.18, s*0.20, s*0.10, '#b76a83');         // brain-stem base
-  const owned=Object.keys(player.cards||{}).length;              // owned-card count badge
-  if(owned>0){ circle(cx+s*0.32, cy-s*0.3, s*0.15, '#ffd44d');
+  if(cardUI.unseen>0){ circle(cx+s*0.32, cy-s*0.3, s*0.15, '#ffd44d');   // "N new" badge — clears when you look
     ctx.fillStyle='#3a2412'; ctx.font='bold '+Math.round(s*0.2)+'px system-ui, sans-serif';
-    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(owned, cx+s*0.32, cy-s*0.29); }
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(cardUI.unseen, cx+s*0.32, cy-s*0.29); }
   ctx.restore();
 }
 function drawCardArt(id, cx, cy, s){                   // cute little icon art, one per card
@@ -5950,7 +5949,7 @@ function endPointer(ev){
         const IB=invButtonBox();
         if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
         const BB=brainButtonBox();
-        if(!hitTool && c.x>=BB.x&&c.x<=BB.x+BB.w&&c.y>=BB.y&&c.y<=BB.y+BB.h){ cardUI.open=true; cardUI.pulse=0; hitTool=true; }   // the Mind → brain grid
+        if(!hitTool && c.x>=BB.x&&c.x<=BB.x+BB.w&&c.y>=BB.y&&c.y<=BB.y+BB.h){ cardUI.open=true; cardUI.pulse=0; cardUI.unseen=0; hitTool=true; }   // the Mind → brain grid (and the notification clears)
         if(!hitTool && _trIconBox && c.x>=_trIconBox.x&&c.x<=_trIconBox.x+_trIconBox.w&&c.y>=_trIconBox.y&&c.y<=_trIconBox.y+_trIconBox.h){
           openTradeWith(_trIconBox.pid); hitTool=true; }                                              // the handshake → open the trade
         for(const b of toolButtons()){ if(hitTool) break; if(c.x>=b.x&&c.x<=b.x+b.w&&c.y>=b.y&&c.y<=b.y+b.h){
