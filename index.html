@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · y';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · z';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1068,6 +1068,11 @@ const ITEM_LBS = { arrows:0.1, wheat:0.5, seeds:0.5, meat:1, jerky:1, meal:1, wo
   bow:2, longbow:3, helmet:3, hoe:3, iron:4, club:4, leggings:4, pickaxe:5, sword:6, silver:6,
   armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5 };
 function carryCap(){ const rs=RACE_STATS[player.race]||RACE_STATS.human; return Math.round((rs.carry||100)*(1+cardVal('packmule'))); }   // Packmule broadens the back
+function overloadFactor(){                          // 1 = walk free · 0.25 = staggering (up to 20% over) · 0 = pinned flat
+  const cap=carryCap(), w=packWeight();
+  if(w<=cap) return 1;
+  return w<=cap*1.2 ? 0.25 : 0;
+}
 function packSlots(){ return player.pack==='large'?16 : player.pack==='medium'?12 : 8; }
 function packName(){ return player.pack==='large'?'Large Pack' : player.pack==='medium'?'Medium Pack' : 'Small Pack'; }
 function packWeight(){ let w=0; for(const k in ITEM_LBS) w+=(player[k]||0)*ITEM_LBS[k]; return Math.round(w*10)/10; }
@@ -1704,7 +1709,11 @@ function updatePlayer(dt){
   const node = player.path[0];
   const dx = node.x-player.px, dy = node.y-player.py, d = Math.hypot(dx,dy);
   if(d>0.001){ player.angle = Math.atan2(dy,dx); player.face = face8(dx,dy); }
-  const step = MOVE_SPEED*(player.speedMul||1)*(1+cardVal('fleetfoot'))*dt;   // Fleet Foot lengthens the stride
+  const ov=overloadFactor();                       // an over-stuffed pack drags at your boots
+  if(ov<=0){ player._ovMsgT=(player._ovMsgT||0)-dt;
+    if(player._ovMsgT<=0){ player._ovMsgT=2.5; addFloat('Overloaded — you cannot move!', player.px, player.py-CELL*2.0, '#e08a8a'); }
+    player.path=[]; player.targetCell=null; return; }
+  const step = MOVE_SPEED*(player.speedMul||1)*(1+cardVal('fleetfoot'))*ov*dt;   // Fleet Foot lengthens the stride — the load shortens it
   if(d<=step){ player.px=node.x; player.py=node.y; player.path.shift(); if(!player.path.length) player.targetCell=null; }
   else { player.px += dx/d*step; player.py += dy/d*step; }
 }
