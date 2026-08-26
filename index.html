@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · z';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-26 · a';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2605,6 +2605,212 @@ function tradeUIClick(cx,cy){
   for(const r2 of L.giveRows){ if(inside(r2.box)){ tradeOfferRemove(r2.k); return; } }
 }
 
+/* ===== dropped bags =====
+   The satchel screen grows a DROP button: pick an item, choose how many, confirm — and a little bag
+   lands at your feet. Bags are SHARED: any player can open one, see what's inside, and take what they
+   can carry. A bag left on the ground for 10 minutes crumbles to dust, contents and all. Bags are
+   host-authoritative and ride the extras snapshot, with the same optimistic-and-reconcile pattern as
+   build sites and crops. */
+const DROPPABLE=TRADEABLE;                          // guld + resources + unequipped gear (what you wear stays on)
+const BAG_DUST_SECS=600;
+let _bagSeq=1;
+const dropUI={ open:false, k:null, n:1 };
+const bagUI={ open:false, id:0, msg:'', msgT:0 };
+function dropAvail(k){                              // how many of k you could set down
+  if(k==='guld') return player.guld||0;
+  let n=player[k]||0;
+  if(k===player.equipMelee) n--; if(k===player.equipRanged) n--;
+  if(k==='helmet'&&player.eqHelmet&&player.helmet) n--;
+  if(k==='armor'&&player.eqArmor&&player.armor) n--;
+  if(k==='leggings'&&player.eqLeggings&&player.leggings) n--;
+  if(k==='chainmail'&&player.eqChainmail&&player.chainmail) n--;
+  return Math.max(0,n);
+}
+function bagAt(cx,cy){ for(const b of (world.bags||[])){ if(Math.abs(b.x-cx)<=1&&Math.abs(b.y-cy)<=1) return b; } return null; }
+function bagById(id){ return (world.bags||[]).find(b=>b.id===id); }
+function addBag(x,y,items){                         // authoritative (host / solo); drops on the same cell merge
+  world.bags=world.bags||[];
+  let b=world.bags.find(b2=>b2.x===x&&b2.y===y&&!b2.loc);
+  if(!b){ b={ id:_bagSeq++, x, y, items:{}, age:0 }; world.bags.push(b); }
+  for(const k in items) b.items[k]=(b.items[k]||0)+items[k];
+  return b;
+}
+function bagTakeAuth(b, key, n){                    // authoritative decrement; an emptied bag vanishes
+  if(!b || !b.items[key]) return 0;
+  const take=Math.max(0, Math.min(n, b.items[key]));
+  b.items[key]-=take; if(b.items[key]<=0) delete b.items[key];
+  if(!Object.keys(b.items).length){ const i=world.bags.indexOf(b); if(i>=0) world.bags.splice(i,1); }
+  return take;
+}
+function confirmDrop(){                             // the picker's DROP button
+  const k=dropUI.k, n=Math.min(dropUI.n, dropAvail(k));
+  if(!k || n<=0){ dropUI.open=false; return; }
+  player[k]=Math.max(0,(player[k]||0)-n);
+  const cx=cellOf(player.px), cy=Math.min(GRID-2, cellOf(player.py)+1);   // set down a step in front of you
+  addFloat('Dropped '+n+' '+tradeKeyName(k), player.px, player.py-CELL*1.8, '#cfd6de');
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected){
+    world.bags=world.bags||[];                                            // optimistic — the next snap swaps in the host's copy
+    world.bags.push({ id:-(_bagSeq++), x:cx, y:cy, items:{[k]:n}, age:0, loc:true });
+    netSend({t:'bagNew', map:mapMode, x:cx, y:cy, items:{[k]:n}});
+  } else addBag(cx, cy, {[k]:n});
+  dropUI.open=false; dropUI.k=null; dropUI.n=1;
+}
+function bagTake(id, key, n){                       // any player helps themselves — if their pack can hold it
+  const b=bagById(id); if(!b) return;
+  if(Math.hypot(player.px/CELL-(b.x+0.5), player.py/CELL-(b.y+0.5))>3){ bagUI.msg='Walk closer to the bag'; bagUI.msgT=2; return; }
+  const have=b.items[key]||0; n=Math.max(0, Math.min(n, have)); if(n<=0) return;
+  const newType=(key!=='guld' && !(player[key]>0)) ? 1 : 0;
+  const err=canCarry((ITEM_LBS[key]||0)*n, newType);
+  if(err){ bagUI.msg=err; bagUI.msgT=2.5; return; }
+  player[key]=(player[key]||0)+n;
+  addFloat('+'+n+' '+tradeKeyName(key), player.px, player.py-CELL*1.8, '#8fd07a');
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected){
+    b.items[key]-=n; if(b.items[key]<=0) delete b.items[key];
+    (net._bagHold=net._bagHold||[]).push({ id:b.id, key, max:b.items[key]||0, miss:0 });   // guard against stale snaps
+    if(!Object.keys(b.items).length){ const i=world.bags.indexOf(b); if(i>=0) world.bags.splice(i,1); }
+    netSend({t:'bagTake', map:mapMode, id:b.id, key, n});
+  } else bagTakeAuth(b, key, n);
+  if(!bagById(id)) bagUI.open=false;                // took the last of it
+}
+function updateBags(dt){                            // the 10-minute dust clock (host / solo authoritative)
+  if(bagUI.msgT>0) bagUI.msgT-=dt;
+  if(typeof net!=='undefined' && net.mode==='guest'){ for(const b of (world.bags||[])) b.age+=dt; return; }
+  for(let i=(world.bags||[]).length-1;i>=0;i--){ const b=world.bags[i]; b.age+=dt;
+    if(b.age>=BAG_DUST_SECS){ world.bags.splice(i,1);
+      if(bagUI.open&&bagUI.id===b.id) bagUI.open=false;
+      if(!DEDICATED) addFloat('A forgotten bag crumbles to dust…', (b.x+0.5)*CELL, (b.y-0.3)*CELL, '#b3a084'); } }
+}
+function drawBag(b){                                // a little dropped sack, fading as the dust clock runs down
+  const s=worldToScreen((b.x+0.5)*CELL, (b.y+0.5)*CELL), u=Math.max(8, CELL*cam.scale*0.5);
+  ctx.save();
+  if(b.age>BAG_DUST_SECS-60) ctx.globalAlpha=Math.max(0.3, 1-(b.age-(BAG_DUST_SECS-60))/60*0.7);
+  shadow(s.x, s.y, u*0.4, u*0.14);
+  ctx.fillStyle='#8a5a34'; ctx.beginPath(); ctx.roundRect(s.x-u*0.36, s.y-u*0.62, u*0.72, u*0.55, u*0.14); ctx.fill();
+  ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(s.x-u*0.36, s.y-u*0.72, u*0.72, u*0.26, u*0.12); ctx.fill();
+  beam(s.x-u*0.16, s.y-u*0.74, s.x+u*0.16, s.y-u*0.74, u*0.09, '#4a2f18');   // the tie
+  circle(s.x, s.y-u*0.34, u*0.08, '#e7c877');
+  ctx.restore();
+}
+let _dropL=null;
+function drawDropUI(){                              // pick an item, then pick how many
+  if(!dropUI.open){ _dropL=null; return; }
+  const pw=Math.min(canvas.width*0.9, Math.max(460, 400*DPR));
+  const headH=Math.max(42,40*DPR), rowh=Math.max(26,24*DPR), pad=pw*0.05;
+  const list=DROPPABLE.filter(k=>dropAvail(k)>0);
+  const ph=Math.min(canvas.height*0.9, dropUI.k ? Math.max(230,210*DPR) : headH+Math.max(1,list.length)*rowh+pad*2.2);
+  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#2e1d10'; ctx.strokeStyle='#7a4a1e'; ctx.lineWidth=Math.max(3,DPR*2);
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,16); ctx.fill(); ctx.stroke();
+  const cs=Math.max(22,24*DPR), closeBtn={ x:px+pw-pad*0.7-cs, y:py+pad*0.6, w:cs, h:cs };
+  ctx.strokeStyle='#cfae7a'; ctx.lineWidth=Math.max(2.5,DPR*2);
+  ctx.beginPath(); ctx.moveTo(closeBtn.x+4,closeBtn.y+4); ctx.lineTo(closeBtn.x+cs-4,closeBtn.y+cs-4);
+  ctx.moveTo(closeBtn.x+cs-4,closeBtn.y+4); ctx.lineTo(closeBtn.x+4,closeBtn.y+cs-4); ctx.stroke();
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(15,14*DPR))+'px system-ui, sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  const rows=[], btns={};
+  if(!dropUI.k){
+    ctx.fillText('Drop what?', px+pad, py+headH*0.6);
+    ctx.font=Math.round(Math.max(12.5,12*DPR))+'px system-ui, sans-serif';
+    let y=py+headH+rowh*0.5;
+    for(const k of list){ if(y>py+ph-rowh*0.4) break;
+      ctx.fillStyle = k==='guld' ? '#ffd44d' : '#e8dcc0';
+      ctx.fillText(TRADE_NAMES[k]+'  ×'+dropAvail(k), px+pad, y);
+      rows.push({k, box:{x:px+pad*0.5, y:y-rowh*0.5, w:pw-pad, h:rowh}});
+      y+=rowh; }
+    if(!list.length){ ctx.fillStyle='#8f7f66'; ctx.fillText('Nothing you can drop.', px+pad, py+headH+rowh*0.5); }
+  } else {
+    const av=dropAvail(dropUI.k); dropUI.n=Math.max(1, Math.min(dropUI.n, av));
+    ctx.fillText('Drop '+TRADE_NAMES[dropUI.k], px+pad, py+headH*0.6);
+    ctx.font='bold '+Math.round(Math.max(24,22*DPR))+'px system-ui, sans-serif';
+    ctx.textAlign='center'; ctx.fillStyle='#ffd44d';
+    ctx.fillText(dropUI.n+'  /  '+av, px+pw/2, py+ph*0.42);
+    const bw=Math.max(46,42*DPR), bh=Math.max(30,28*DPR), gy=py+ph*0.62;
+    const defs=[['m10','-10'],['m1','-1'],['p1','+1'],['p10','+10'],['max','MAX']];
+    let bx2=px+pw/2-(defs.length*bw+(defs.length-1)*8)/2;
+    ctx.font='bold '+Math.round(bh*0.42)+'px system-ui, sans-serif';
+    for(const [key2,label] of defs){
+      btns[key2]={x:bx2, y:gy-bh/2, w:bw, h:bh};
+      ctx.fillStyle='#4a3a26'; ctx.beginPath(); ctx.roundRect(bx2, gy-bh/2, bw, bh, 7); ctx.fill();
+      ctx.fillStyle='#f4e7cf'; ctx.fillText(label, bx2+bw/2, gy+1);
+      bx2+=bw+8; }
+    const dw=Math.max(110,100*DPR), dh=Math.max(34,30*DPR);
+    btns.drop={x:px+pw/2-dw-8, y:py+ph-pad*0.7-dh, w:dw, h:dh};
+    btns.back={x:px+pw/2+8,    y:py+ph-pad*0.7-dh, w:dw, h:dh};
+    ctx.fillStyle='#3f7d3f'; ctx.beginPath(); ctx.roundRect(btns.drop.x,btns.drop.y,dw,dh,9); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(dh*0.42)+'px system-ui, sans-serif'; ctx.fillText('DROP', btns.drop.x+dw/2, btns.drop.y+dh*0.55);
+    ctx.fillStyle='#5a4632'; ctx.beginPath(); ctx.roundRect(btns.back.x,btns.back.y,dw,dh,9); ctx.fill();
+    ctx.fillStyle='#f4e7cf'; ctx.fillText('Back', btns.back.x+dw/2, btns.back.y+dh*0.55);
+  }
+  ctx.restore();
+  _dropL={ panel:{x:px,y:py,w:pw,h:ph}, closeBtn, rows, btns };
+}
+function dropUIClick(cx,cy){
+  const L=_dropL; if(!L){ dropUI.open=false; return; }
+  const inside=(b)=> b && cx>=b.x&&cx<=b.x+b.w&&cy>=b.y&&cy<=b.y+b.h;
+  if(inside(L.closeBtn) || !inside(L.panel)){ dropUI.open=false; return; }
+  if(!dropUI.k){ for(const r2 of L.rows){ if(inside(r2.box)){ dropUI.k=r2.k; dropUI.n=1; return; } } return; }
+  const av=dropAvail(dropUI.k), B2=L.btns;
+  if(inside(B2.m10)) dropUI.n=Math.max(1, dropUI.n-10);
+  else if(inside(B2.m1)) dropUI.n=Math.max(1, dropUI.n-1);
+  else if(inside(B2.p1)) dropUI.n=Math.min(av, dropUI.n+1);
+  else if(inside(B2.p10)) dropUI.n=Math.min(av, dropUI.n+10);
+  else if(inside(B2.max)) dropUI.n=av;
+  else if(inside(B2.drop)) confirmDrop();
+  else if(inside(B2.back)){ dropUI.k=null; dropUI.n=1; }
+}
+let _bagL=null;
+function drawBagUI(){                               // a bag's contents — take what you can carry
+  if(!bagUI.open){ _bagL=null; return; }
+  const b=bagById(bagUI.id); if(!b){ bagUI.open=false; _bagL=null; return; }
+  const keys=Object.keys(b.items);
+  const pw=Math.min(canvas.width*0.9, Math.max(480, 420*DPR));
+  const headH=Math.max(44,42*DPR), rowh=Math.max(30,28*DPR), pad=pw*0.05;
+  const ph=Math.min(canvas.height*0.9, headH+Math.max(1,keys.length)*rowh+pad*2.6);
+  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#2e1d10'; ctx.strokeStyle='#7a4a1e'; ctx.lineWidth=Math.max(3,DPR*2);
+  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,16); ctx.fill(); ctx.stroke();
+  const cs=Math.max(22,24*DPR), closeBtn={ x:px+pw-pad*0.7-cs, y:py+pad*0.6, w:cs, h:cs };
+  ctx.strokeStyle='#cfae7a'; ctx.lineWidth=Math.max(2.5,DPR*2);
+  ctx.beginPath(); ctx.moveTo(closeBtn.x+4,closeBtn.y+4); ctx.lineTo(closeBtn.x+cs-4,closeBtn.y+cs-4);
+  ctx.moveTo(closeBtn.x+cs-4,closeBtn.y+4); ctx.lineTo(closeBtn.x+4,closeBtn.y+cs-4); ctx.stroke();
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(15,14*DPR))+'px system-ui, sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText('Dropped Bag', px+pad, py+headH*0.45);
+  ctx.fillStyle='#b3a084'; ctx.font=Math.round(Math.max(11,10.5*DPR))+'px system-ui, sans-serif';
+  const mins=Math.max(1, Math.ceil((BAG_DUST_SECS-(b.age||0))/60));
+  ctx.fillText('crumbles to dust in ~'+mins+' min', px+pad, py+headH*0.82);
+  const rows=[]; let y=py+headH+rowh*0.55;
+  const b1w=Math.max(58,52*DPR), b2w=Math.max(50,46*DPR), bh=Math.max(24,22*DPR);
+  for(const k of keys){ if(y>py+ph-rowh*0.4) break;
+    ctx.fillStyle = k==='guld' ? '#ffd44d' : '#e8dcc0';
+    ctx.font=Math.round(Math.max(12.5,12*DPR))+'px system-ui, sans-serif'; ctx.textAlign='left';
+    ctx.fillText(TRADE_NAMES[k]+'  ×'+b.items[k], px+pad, y);
+    const t1={x:px+pw-pad-b1w-b2w-10, y:y-bh/2, w:b1w, h:bh}, tA={x:px+pw-pad-b2w, y:y-bh/2, w:b2w, h:bh};
+    ctx.fillStyle='#3f7d3f'; ctx.beginPath(); ctx.roundRect(t1.x,t1.y,t1.w,t1.h,6); ctx.fill();
+    ctx.fillStyle='#2e5d2e'; ctx.beginPath(); ctx.roundRect(tA.x,tA.y,tA.w,tA.h,6); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(bh*0.45)+'px system-ui, sans-serif'; ctx.textAlign='center';
+    ctx.fillText('Take 1', t1.x+t1.w/2, y+1); ctx.fillText('All', tA.x+tA.w/2, y+1);
+    rows.push({k, one:t1, all:tA});
+    y+=rowh; }
+  if(bagUI.msgT>0 && bagUI.msg){ ctx.fillStyle='#e08a8a'; ctx.textAlign='left';
+    ctx.font='bold '+Math.round(Math.max(11.5,11*DPR))+'px system-ui, sans-serif';
+    ctx.fillText(bagUI.msg, px+pad, py+ph-pad*0.8); }
+  ctx.restore();
+  _bagL={ panel:{x:px,y:py,w:pw,h:ph}, closeBtn, rows };
+}
+function bagUIClick(cx,cy){
+  const L=_bagL; if(!L){ bagUI.open=false; return; }
+  const inside=(bb)=> bb && cx>=bb.x&&cx<=bb.x+bb.w&&cy>=bb.y&&cy<=bb.y+bb.h;
+  if(inside(L.closeBtn) || !inside(L.panel)){ bagUI.open=false; return; }
+  const b=bagById(bagUI.id); if(!b){ bagUI.open=false; return; }
+  for(const r2 of L.rows){
+    if(inside(r2.one)){ bagTake(bagUI.id, r2.k, 1); return; }
+    if(inside(r2.all)){ bagTake(bagUI.id, r2.k, b.items[r2.k]||0); return; } }
+}
 function onTapWorld(wx,wy){
   const rp=pickRemotePlayer(wx,wy);                 // a fellow player outranks everything — walk over to trade
   if(rp){ player.tradeTarget=rp.id|0; player.attack=null; player.chopTree=null; player.chopping=false;
@@ -2629,6 +2835,8 @@ function onTapWorld(wx,wy){
     const cr=creatureAt(wx,wy);
     if(cr && cr.kind==='goblin'){ startAttack(cr, false, true); return; }   // bare-handed → walk up and punch the goblin
   }
+  const bg2=bagAt(cx,cy);
+  if(bg2){ bagUI.open=true; bagUI.id=bg2.id; bagUI.msg=''; bagUI.msgT=0; pathToCell(bg2.x, Math.min(GRID-1,bg2.y+1)); return; }   // tapped a dropped bag — walk over, panel opens
   const carc=carcassAt(wx,wy);
   if(carc){ startCarcass(carc); return; }          // tapped a fresh carcass → skin it for hides (+ stamina)
   const body=goblinCorpseAt(wx,wy);
@@ -4299,6 +4507,7 @@ function draw(){
   const items=[];
   if(shop.placed) items.push({wx:(shop.x+shop.w/2)*CELL, wy:(shop.y+shop.h)*CELL, kind:9});   // shop billboard, anchored at its front wall
   for(const s2 of (world.sites||[])) items.push({wx:(s2.tx*TILE+BUILDINGS[s2.kind].tiles*TILE/2)*CELL, wy:(s2.ty*TILE+BUILDINGS[s2.kind].tiles*TILE)*CELL, kind:29, ref:s2});   // build sites
+  for(const b2 of (world.bags||[])) items.push({wx:(b2.x+0.5)*CELL, wy:(b2.y+1)*CELL, kind:30, ref:b2});   // dropped bags
   if(stall.placed) items.push({wx:(stall.x+stall.w/2)*CELL, wy:(stall.y+stall.h)*CELL, kind:13});   // seed stall
   if(butcher.placed) items.push({wx:(butcher.x+butcher.w/2)*CELL, wy:(butcher.y+butcher.h)*CELL, kind:28});   // butcher's stall
   if(armorShop.placed) items.push({wx:(armorShop.x+armorShop.w/2)*CELL, wy:(armorShop.y+armorShop.h)*CELL, kind:14});   // armor shop
@@ -4383,6 +4592,7 @@ function draw(){
     else if(it.kind===12) drawWheat(it.cell);
     else if(it.kind===13) drawStall(s);
     else if(it.kind===29) drawSite(it.ref);
+    else if(it.kind===30) drawBag(it.ref);
     else if(it.kind===28) drawButcher(s);
     else if(it.kind===14) drawArmorShop(s);
     else if(it.kind===10) drawTurtle(s, it.ref);
@@ -4445,6 +4655,8 @@ function draw(){
     drawSiteUI();           // a build site's progress panel
     drawCardUI();           // the Mind — the brain grid of training cards
     drawTradeUI();          // the trade table, when bartering with another player
+    drawDropUI();           // the drop picker — what to set down, and how many
+    drawBagUI();            // a dropped bag's contents
   }
   // drawZoomHUD();         // zoom read-out retired — the 5×–10× band is settled (re-enable to tune again)
 }
@@ -5482,6 +5694,12 @@ function drawInvUI(){
   ctx.font=Math.round(Math.max(12, L.headH*0.26))+'px system-ui, sans-serif';
   ctx.fillStyle=(_w>_cap||_u>=_s)?'#e2493a':PAL.shopWall;
   ctx.fillText(_w+' / '+_cap+' lbs   \u00b7   '+_u+' / '+_s+' slots', L.px+L.pad+_pnw+Math.max(12,L.headH*0.3), L.py+L.headH*0.52);
+  const _dbw=Math.max(70,64*DPR), _dbh=Math.max(27,25*DPR);                              // the DROP button, beside the X
+  _invDropBtn={ x:L.closeBtn.x-_dbw-Math.max(12,10*DPR), y:L.closeBtn.y+(L.closeBtn.h-_dbh)/2, w:_dbw, h:_dbh };
+  ctx.fillStyle='#8a4a3a'; ctx.beginPath(); ctx.roundRect(_invDropBtn.x,_invDropBtn.y,_dbw,_dbh,8); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(_dbh*0.48)+'px system-ui, sans-serif';
+  ctx.textAlign='center'; ctx.fillText('DROP', _invDropBtn.x+_dbw/2, _invDropBtn.y+_dbh*0.56);
+  ctx.textAlign='left';
   ctx.fillStyle=PAL.panelHi;
   // hero, centered between the slot columns
   const sv=cam.scale, sf=player.face; cam.scale=L.hero.u/CELL; player.face='S';
@@ -5591,9 +5809,11 @@ function drawInvUI(){
   ctx.font='bold '+Math.round(C.h*0.55)+'px system-ui, sans-serif'; ctx.fillText('✕', C.x+C.w/2, C.y+C.h/2);
   ctx.restore();
 }
+let _invDropBtn=null;
 function invUIClick(cx,cy){
-  const L=invLayout(), inR=(r)=> cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
+  const L=invLayout(), inR=(r)=> r && cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
   if(inR(L.closeBtn)){ invUI.open=false; return; }
+  if(inR(_invDropBtn)){ invUI.open=false; dropUI.open=true; dropUI.k=null; dropUI.n=1; return; }   // DROP → pick something to set down
   for(const t of L.tabs){ if(inR(t)){ invUI.tab=t.key; return; } }
   for(const sl of L.slots){ if(inR(sl)){ sl.def.toggle(); return; } }   // tap a slot: unequip what's worn / put on what's owned
   for(const c of L.cells){ if(c.it.kind==='weapon' && inR(c)){
@@ -5900,6 +6120,7 @@ function loop(ts){
     updateHunger(dt);                            // the hunger clock, regen and digestion (§4d)
     updateCards(dt);                             // training-in countdowns
     tradeTick(dt);                               // invites, distance checks, message fade
+    updateBags(dt);                              // dropped bags age toward dust
     if(shop.msgT>0) shop.msgT-=dt;
     if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }
     updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt);
@@ -5919,6 +6140,7 @@ function loop(ts){
   updateHunger(dt);                              // the hunger clock, regen and digestion (§4d)
   updateCards(dt);                               // training-in countdowns
   if(typeof net!=='undefined' && net.mode!=='off') tradeTick(dt);   // trading, when others share the world
+  updateBags(dt);                                // dropped bags age toward dust
   if(shop.msgT>0) shop.msgT-=dt;                                                                 // fade the shop message
   if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }  // deselect a tool that's no longer owned
   updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt); updateBushes(dt);
@@ -6012,6 +6234,8 @@ function endPointer(ev){
       else if(invUI.open){ invUIClick(c.x, c.y); }   // inventory screen captures the tap
       else if(cardUI.open){ cardUIClick(c.x, c.y); } // the Mind captures the tap
       else if(trade.open){ tradeUIClick(c.x, c.y); } // the trade table captures the tap
+      else if(dropUI.open){ dropUIClick(c.x, c.y); } // the drop picker captures the tap
+      else if(bagUI.open){ bagUIClick(c.x, c.y); }   // a bag's contents capture the tap
       else {
         let hitTool=false;
         if(mmButtonTap(c.x, c.y)) hitTool=true;                                                      // minimap +/- buttons
@@ -6567,6 +6791,7 @@ function buildSnap(){
     sn.rk=(mapMode==='dungeon'&&world.rocks)?world.rocks.map(r=>r.gone?1:0):null;
     sn.pk=(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null;
     sn.tf=(world.stumps||[]).map(s=>[s.x, s.y, Math.round(s.regrow)]);   // felled trees, so late joiners match the canopy
+    sn.bags=(world.bags||[]).map(b=>[b.id, b.x, b.y, Math.round(b.age), b.items]);   // dropped bags, shared with everyone
   }
   return sn;
 }
@@ -6593,6 +6818,22 @@ function netApplySnap(m){                              // world portion of a sna
       else { L.snapMiss=(L.snapMiss||0)+1;                                   // a snap already in flight may predate the stake…
         if(L.snapMiss<3) world.sites.push(L); } }                            // …keep showing ours a few beats, then accept the refusal
     if(siteUI.open && !siteById(siteUI.id)) siteUI.open=false; }
+  if(m.bags){ const locs=(world.bags||[]).filter(b=>b.loc);                // our optimistic drops
+    const heldBag=bagUI.open?bagById(bagUI.id):null;
+    world.bags=m.bags.map(a2=>({id:a2[0], x:a2[1], y:a2[2], age:a2[3], items:Object.assign({},a2[4]||{})}));
+    const holds=net._bagHold=net._bagHold||[];
+    for(let i2=holds.length-1;i2>=0;i2--){ const h=holds[i2]; const b=bagById(h.id);
+      if(!b){ holds.splice(i2,1); continue; }
+      const cur=b.items[h.key]||0;
+      if(cur>h.max){ b.items[h.key]=h.max; if(h.max<=0) delete b.items[h.key];       // a stale snap — our take stands
+        if(!Object.keys(b.items).length) world.bags.splice(world.bags.indexOf(b),1);
+        h.miss=(h.miss||0)+1; if(h.miss>=4) holds.splice(i2,1); }
+      else holds.splice(i2,1); }                                                     // the host caught up
+    for(const L2 of locs){ const match=world.bags.find(b=>b.x===L2.x&&b.y===L2.y&&!b.loc);
+      if(match){ if(heldBag===L2 && bagUI.open) bagUI.id=match.id; }
+      else { L2.snapMiss=(L2.snapMiss||0)+1; if(L2.snapMiss<3) world.bags.push(L2); } }
+    if(heldBag && heldBag.loc && !bagById(bagUI.id)){ const m3=world.bags.find(b=>b.x===heldBag.x&&b.y===heldBag.y); if(m3) bagUI.id=m3.id; }
+    if(bagUI.open && !bagById(bagUI.id)) bagUI.open=false; }
   if(m.brg){ for(const b of m.brg){ if(!(world.builtBridges||[]).some(x2=>x2[0]===b[0]&&x2[1]===b[1])) placeBridgeTileAt(b[0], b[1], b[2]); } }
   if(m.tf){ for(const s of m.tf){                                        // reconcile the canopy with the host's stumps
     const t=(world.trees||[]).find(t2=>t2.x===s[0]&&t2.y===s[1]);
@@ -6626,7 +6867,7 @@ function netOnData(m, fromClient){
   if(!m||!m.t) return;
   const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1, wlob:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
-  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1};
+  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1, bagNew:1, bagTake:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
   if(MAP_FX[m.t] && m.map && m.map!==mapMode) return;   // effects on a map we're not looking at
   if(m.t==='wel'){ const prevSeed=(typeof worldSeed!=='undefined')?(worldSeed>>>0):null; const wasPlaying=(scene==='game');
@@ -6671,6 +6912,10 @@ function netOnData(m, fromClient){
   else if(m.t==='tfell'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);           // another player's tree comes down HERE too
     if(t) fellTree(t, +m.fx||((t.x+1.5)*CELL), true); }
   else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
+  else if(m.t==='bagNew'){ if(net.mode==='host'){ const it2={};                                 // a guest set a bag down — sanitize and stake it
+    for(const k2 in (m.items||{})){ if(DROPPABLE.indexOf(k2)>=0){ const v=m.items[k2]|0; if(v>0) it2[k2]=Math.min(v,99999); } }
+    if(Object.keys(it2).length) addBag(Math.max(0,Math.min(GRID-1,m.x|0)), Math.max(0,Math.min(GRID-1,m.y|0)), it2); } }
+  else if(m.t==='bagTake'){ if(net.mode==='host'){ const b=bagById(m.id|0); if(b) bagTakeAuth(b, ''+m.key, Math.max(0,m.n|0)); } }
   else if(m.t==='siteNew'){ if(net.mode==='host') addSite(m.kind, m.tx|0, m.ty|0); }
   else if(m.t==='siteWood'){ if(net.mode==='host'){ const s=(world.sites||[]).find(x2=>x2.id===m.i); siteAddWood(s, Math.max(0, Math.min(50, m.n|0))); } }
   else if(m.t==='cropAct'){ if(net.mode==='host'){                                              // guest farmed — apply the same change here (snapshots echo it back)
