@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-26 · a';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-26 · b';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2811,6 +2811,93 @@ function bagUIClick(cx,cy){
     if(inside(r2.one)){ bagTake(bagUI.id, r2.k, 1); return; }
     if(inside(r2.all)){ bagTake(bagUI.id, r2.k, b.items[r2.k]||0); return; } }
 }
+/* ===== weather: rain and lightning =====
+   The HOST rolls the storms, so every player shares the same sky. Rain darkens the world and streaks
+   the screen; every so often the storm throws a bolt near some unlucky player. Anything within reach
+   of the strike — player, deer, goblin — takes 100 damage THROUGH the normal armor pipeline (armor
+   and Thick Hide soften it); a struck tree comes crashing down. The dungeon never sees weather. */
+const RAIN={ chancePerSec:1/300, minDur:60, maxDur:150, boltMin:7, boltMax:18, dmg:100 };
+const weather={ raining:false, t:0, boltT:0, wet:0, flash:0, bolt:null, drops:[] };
+function weatherAnchors(){                          // who the storm stalks: every active player out in the forest
+  const a=[];
+  if(!DEDICATED && !player.dead && mapMode==='forest' && scene==='game') a.push({px:player.px, py:player.py});
+  for(const p of (typeof remotePlayers==='function'?remotePlayers():[])){
+    if(p.active && !p.dead && (p.map||'forest')==='forest') a.push({px:p.px, py:p.py}); }
+  return a;
+}
+function startRain(){ weather.raining=true; weather.t=RAIN.minDur+Math.random()*(RAIN.maxDur-RAIN.minDur);
+  weather.boltT=3+Math.random()*6; }
+function updateWeather(dt){                         // HOST / SOLO: the storm's own mind
+  if(typeof net!=='undefined' && net.mode==='guest') return;
+  if(!weather.raining){ if(Math.random()<dt*RAIN.chancePerSec) startRain(); return; }
+  weather.t-=dt;
+  if(weather.t<=0){ weather.raining=false; return; }
+  weather.boltT-=dt;
+  if(weather.boltT<=0){ weather.boltT=RAIN.boltMin+Math.random()*(RAIN.boltMax-RAIN.boltMin); lightningStrike(); }
+}
+function lightningStrike(){                         // the host picks where the sky's anger lands
+  const anchors=weatherAnchors();
+  let x,y;
+  if(anchors.length && Math.random()<0.85){ const a=anchors[(Math.random()*anchors.length)|0];
+    const ang=Math.random()*Math.PI*2, r=Math.random()*CELL*24;                     // near SOMEONE — mostly misses, sometimes not
+    x=a.px+Math.cos(ang)*r; y=a.py+Math.sin(ang)*r; }
+  else { x=Math.random()*GRID*CELL; y=Math.random()*GRID*CELL; }
+  x=Math.max(0,Math.min(GRID*CELL-1,x)); y=Math.max(0,Math.min(GRID*CELL-1,y));
+  boltLand(x,y);
+  if(typeof net!=='undefined' && net.mode==='host' && net.connected)
+    netSend({t:'bolt', map:'forest', x:Math.round(x), y:Math.round(y)});
+}
+function boltLand(x,y){                             // the strike itself — damage only where authority lives
+  boltFX(x,y);
+  if(typeof net!=='undefined' && net.mode==='guest') return;
+  const R2=CELL*1.6;
+  if(!DEDICATED && !player.dead && mapMode==='forest' && Math.hypot(player.px-x, player.py-y)<R2){
+    playerHit(RAIN.dmg, true, false);                                               // armor and Thick Hide take their share
+    addFloat('STRUCK BY LIGHTNING!', player.px, player.py-CELL*2.6, '#ffe9a8'); }
+  if(typeof net!=='undefined' && net.mode==='host'){
+    for(const c of net.clients){ if(c.open && c.p.active && !c.p.dead && (c.p.map||'forest')==='forest' &&
+      Math.hypot(c.p.px-x, c.p.py-y)<R2){ try{ c.conn.send({t:'hit', amount:RAIN.dmg, ignoreArmor:false}); }catch(e){} } } }
+  for(const d of allDeer){ if(!d.dead && !d.gone && Math.hypot(d.px-x, d.py-y)<R2) damageCreature('deer', d, RAIN.dmg); }
+  for(const g of goblins){ if(!g.dead && !g.gone && Math.hypot((g.px||0)-x, (g.py||0)-y)<R2) damageCreature('goblin', g, RAIN.dmg); }
+  const t=treeAt(cellOf(x), cellOf(y)); if(t) fellTree(t, x+CELL);                  // a struck tree comes crashing down
+}
+function boltFX(x,y){ weather.flash=0.32;
+  const segs=[]; let off=0; for(let i=0;i<7;i++){ segs.push(off); off+=(Math.random()-0.5)*CELL*2.2; }
+  weather.bolt={ x, y, t:0.35, segs }; }
+function updateWeatherFX(dt){                       // EVERY client: fades, raindrops, the flash
+  const want=(weather.raining && mapMode==='forest') ? 1 : 0;
+  weather.wet += (want-weather.wet)*Math.min(1, dt*1.2);
+  if(weather.wet<0.01) weather.drops.length=0;
+  if(weather.flash>0) weather.flash-=dt;
+  if(weather.bolt){ weather.bolt.t-=dt; if(weather.bolt.t<=0) weather.bolt=null; }
+  if(weather.wet>0.02){
+    const target=Math.round(110*weather.wet);
+    while(weather.drops.length<target)
+      weather.drops.push({ x:Math.random()*canvas.width, y:Math.random()*canvas.height, l:14+Math.random()*18, s:900+Math.random()*500 });
+    for(const d of weather.drops){ d.y+=d.s*dt*DPR; d.x-=d.s*dt*0.18*DPR;
+      if(d.y>canvas.height){ d.y=-24; d.x=Math.random()*(canvas.width+80); } }
+  }
+}
+function drawWeather(){                             // rain over the world, under the HUD
+  if(mapMode!=='forest') return;
+  if(weather.wet>0.01){
+    rect(0,0,canvas.width,canvas.height,'rgba(16,22,44,'+(0.22*weather.wet).toFixed(3)+')');   // the sky darkens
+    ctx.save(); ctx.strokeStyle='rgba(200,220,255,'+(0.32*weather.wet).toFixed(3)+')'; ctx.lineWidth=Math.max(1, DPR);
+    ctx.beginPath();
+    for(const d of weather.drops){ ctx.moveTo(d.x, d.y); ctx.lineTo(d.x+d.l*0.18*DPR, d.y-d.l*DPR); }
+    ctx.stroke(); ctx.restore();
+  }
+  if(weather.bolt){ const b=weather.bolt, s=worldToScreen(b.x, b.y);
+    ctx.save(); ctx.globalAlpha=Math.max(0, Math.min(1, b.t/0.35));
+    ctx.strokeStyle='#fdfdff'; ctx.lineWidth=Math.max(2.5, DPR*2.4); ctx.shadowColor='#aecbff'; ctx.shadowBlur=14;
+    ctx.beginPath();
+    const n=b.segs.length;
+    for(let i=0;i<n;i++){ const yy=s.y*(i/(n-1)); if(i) ctx.lineTo(s.x+b.segs[i]*cam.scale, yy); else ctx.moveTo(s.x+b.segs[0]*cam.scale, 0); }
+    ctx.lineTo(s.x, s.y); ctx.stroke();
+    circle(s.x, s.y, Math.max(4, CELL*cam.scale*0.35*(b.t/0.35)), 'rgba(240,246,255,0.85)');   // the impact glow
+    ctx.restore(); }
+  if(weather.flash>0) rect(0,0,canvas.width,canvas.height,'rgba(255,255,255,'+(0.55*Math.max(0,weather.flash)/0.32).toFixed(3)+')');
+}
 function onTapWorld(wx,wy){
   const rp=pickRemotePlayer(wx,wy);                 // a fellow player outranks everything — walk over to trade
   if(rp){ player.tradeTarget=rp.id|0; player.attack=null; player.chopTree=null; player.chopping=false;
@@ -4627,6 +4714,7 @@ function draw(){
     if(warm>0.005) rect(0,0,canvas.width,canvas.height,'rgba(255,140,60,'+warm.toFixed(3)+')');
     if(dark>0.005) rect(0,0,canvas.width,canvas.height,'rgba(13,17,46,'+dark.toFixed(3)+')');
     drawFireflies(dark);    // and the fireflies come out along the banks
+    drawWeather();          // rain, gloom and lightning over the meadow
   }
   drawFloats();             // floating text (e.g. "+1 stamina")
   drawHurtFlash();          // red screen-edge flash when hurt
@@ -6121,6 +6209,7 @@ function loop(ts){
     updateCards(dt);                             // training-in countdowns
     tradeTick(dt);                               // invites, distance checks, message fade
     updateBags(dt);                              // dropped bags age toward dust
+    updateWeatherFX(dt);                         // rain falls on the guest's screen too (host says when)
     if(shop.msgT>0) shop.msgT-=dt;
     if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }
     updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt);
@@ -6141,6 +6230,7 @@ function loop(ts){
   updateCards(dt);                               // training-in countdowns
   if(typeof net!=='undefined' && net.mode!=='off') tradeTick(dt);   // trading, when others share the world
   updateBags(dt);                                // dropped bags age toward dust
+  updateWeather(dt); updateWeatherFX(dt);        // storms roll in, lightning finds the ground
   if(shop.msgT>0) shop.msgT-=dt;                                                                 // fade the shop message
   if(player.tool){ const g=toolGroups(); if(!g.tools.includes(player.tool) && !g.weapons.includes(player.tool)) player.tool=null; }  // deselect a tool that's no longer owned
   updateCombat(dt); updatePlayer(dt); updateChop(dt); updateMine(dt); updateFelling(dt); updateStumps(dt); updateBushes(dt);
@@ -6775,7 +6865,7 @@ function buildSnap(){
     gob.push({ i:g.nid, k:g.kind, x:g.px, y:g.py, bx:g.x, by:g.y, f:g.face, l:g.faceLeft?1:0,
       d:g.dead?1:0, t:Math.round(g.deadT||0), h:g.hp, lo:g.looted?1:0, st:g.st, sw:+((g.swingT||0).toFixed(2)), pu:+((g.punchT||0).toFixed(2)), ca:+((g.castT||0).toFixed(2)), ho:+((g.hopAmt||0).toFixed(2)),
       sk:g.srcKind||0, sa:g.antlers?1:0, sf:g.fawn?1:0 }); }
-  const sn={ t:'snap', players, wt:+(worldTime.toFixed(1)), gob, gobFull:extras?1:0, cv:cave.unlocked?1:0 };
+  const sn={ t:'snap', players, wt:+(worldTime.toFixed(1)), gob, gobFull:extras?1:0, cv:cave.unlocked?1:0, rw:weather.raining?1:0 };
   if(withDeer){ const deer=[]; for(const d of allDeer){ if(d.gone) continue; d.nid=d.nid||net.nextNid++;
     if(!extras && !nearAny(d.px, d.py)) continue;
     deer.push({ i:d.nid, x:d.px, y:d.py, f:d.face, l:d.faceLeft?1:0, s:d.state, d:d.dead?1:0, t:Math.round(d.deadT||0),
@@ -6881,6 +6971,7 @@ function netOnData(m, fromClient){
     } else mpEnterTavern(); }
   else if(m.t==='snap'){ if(net.mode==='guest'){
     if(m.wt!=null) worldTime=m.wt;                    // one sun for the whole party
+    if(m.rw!=null) weather.raining=!!m.rw;            // …and one storm: the host's weather is everyone's weather
     if(m.players) net.remotes=m.players.filter(p2=>p2.id!==net.myId);
     if((m.map||'forest')===mapMode) netApplySnap(m); } }
   else if(m.t==='me'){ if(net.mode==='host' && fromClient){ const P=fromClient.p;
@@ -6894,6 +6985,7 @@ function netOnData(m, fromClient){
   else if(m.t==='bfx'){ addParticle({kind:'boulder', x:m.x0, y:m.y0, x0:m.x0, y0:m.y0, tx:m.tx, ty:m.ty, t:0, dur:m.dur, life:99, max:99, arc:m.arc, fx:true}); }   // the boss's boulder, mirrored
   else if(m.t==='sfx'){ net._vfxIn=true; try{ spawnSoulFX(m.x, m.y, m.n); }finally{ net._vfxIn=false; } }   // the other player's soul harvest, mirrored
   else if(m.t==='wlob'){ spawnWoodLob(+m.x0||0, +m.y0||0, +m.tx||0, +m.ty||0, Math.min(5, m.n|0)); }        // their donated logs arc on YOUR screen too
+  else if(m.t==='bolt'){ if((m.map||'forest')===mapMode) boltFX(+m.x||0, +m.y||0); }                        // the host's lightning cracks on every screen (damage arrives as 'hit')
   else if(m.t==='bossKill'){ grantBossReward(); }                                               // the boss fell — everyone shares the hoard
   else if(m.t==='kingKill'){ grantKingReward(); }                                               // the king fell — a fortune for all
   else if(m.t==='mined'){ if(net.mode==='host' && mapMode==='dungeon' && world.rocks && world.rocks[m.i]){ const r=world.rocks[m.i];
