@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-25 · x';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-25 · y';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1842,6 +1842,13 @@ function confirmBuildSite(){
   else addSite(bm.kind, bm.tx, bm.ty);
   buildMode=null; _buildConfirmBox=null;
 }
+function spawnWoodLob(sx, sy, tx, ty, n){           // donated logs LOB themselves from the giver into the site
+  const dur=Math.max(0.45, Math.hypot(tx-sx, ty-sy)/(CELL*10));
+  for(let i=0;i<Math.min(5, n||1);i++)
+    addParticle({ kind:'woodlob', x:sx, y:sy, x0:sx, y0:sy,
+      tx:tx+(Math.random()-0.5)*CELL*0.9, ty:ty+(Math.random()-0.5)*CELL*0.6,
+      t:-i*0.13, dur, arc:CELL*(1.6+Math.random()*0.7), spin:Math.random()*Math.PI, life:99, max:99 });
+}
 function siteContribute(){                          // the Add Wood button on a site's panel
   const s=siteById(siteUI.id); if(!s){ siteUI.open=false; return; }
   if(s.loc){ shop.msg='Staking the site…'; shop.msgT=1.5; return; }         // a breath while the host confirms — no wood is lost
@@ -1849,6 +1856,11 @@ function siteContribute(){                          // the Add Wood button on a 
   if(dTiles>5){ shop.msg='Walk closer to the site'; shop.msgT=2; return; }
   const n=Math.min(5, s.need-s.have, player.wood); if(n<=0){ shop.msg=player.wood<=0?'You have no wood':''; shop.msgT=2; return; }
   player.wood-=n; addFloat('-'+n+' wood', player.px, player.py-CELL*1.7, PAL.plankHi);
+  const lx=player.px, ly=player.py-CELL*0.6;                                          // the logs fly from your hands…
+  const ltx=(s.tx*TILE+BUILDINGS[s.kind].tiles*TILE/2)*CELL, lty=(s.ty*TILE+BUILDINGS[s.kind].tiles*TILE/2)*CELL;   // …into the heart of the site
+  spawnWoodLob(lx, ly, ltx, lty, n);
+  if(typeof net!=='undefined' && net.mode!=='off' && net.connected)
+    netSend({t:'wlob', map:mapMode, x0:Math.round(lx), y0:Math.round(ly), tx:Math.round(ltx), ty:Math.round(lty), n});
   if(typeof net!=='undefined' && net.mode==='guest' && net.connected){ s.have=Math.min(s.need, s.have+n); netSend({t:'siteWood', map:mapMode, i:s.id, n}); }
   else siteAddWood(s, n);
   if(!siteById(siteUI.id)) siteUI.open=false;       // it finished under your hammer
@@ -3286,6 +3298,10 @@ function updateParticles(dt){
     else if(p.kind==='boulder'){ p.t+=dt; const f=Math.min(1,p.t/p.dur);
       p.x=p.x0+(p.tx-p.x0)*f; p.y=p.y0+(p.ty-p.y0)*f; p.f=f; p.hz=Math.sin(Math.PI*f)*p.arc;   // a lobbed arc, not an arrow's line
       if(p.t>=p.dur){ boulderLand(p.tx, p.ty, !!p.fx); particles.splice(i,1); } continue; }
+    else if(p.kind==='woodlob'){ p.t+=dt; if(p.t<0) continue;                        // staggered launch — each log waits its turn
+      const f=Math.min(1,p.t/p.dur);
+      p.x=p.x0+(p.tx-p.x0)*f; p.y=p.y0+(p.ty-p.y0)*f; p.f=f; p.hz=Math.sin(Math.PI*f)*p.arc;
+      if(p.t>=p.dur){ for(let k2=0;k2<4;k2++) spawnChip(p.tx, p.ty); particles.splice(i,1); } continue; }
     else if(p.kind==='smoke'){ p.x+=p.vx*dt; p.hz+=p.vhz*dt; p.vhz*=(1-0.4*dt); }   // rise & slow
     else if(p.kind==='fish'){ p.x+=p.vx*dt; p.hz+=p.vhz*dt; p.vhz-=p.g*dt;
       if(p.hz<=0 && p.vhz<0){ if(!p.splashed){ spawnRipple(p.x,p.y); p.splashed=true; } particles.splice(i,1); } }
@@ -3343,6 +3359,15 @@ function drawParticles(){
       circle(s.x, by, r, '#6f7175');                                                  // the rock
       circle(s.x-r*0.25, by-r*0.28, r*0.5, '#8a8d90');                                // highlight
       circle(s.x+r*0.3, by+r*0.26, r*0.2, '#5c5e61'); }                               // pit
+    else if(p.kind==='woodlob'){ if(p.t>=0){
+      const f=p.f||0, up=Math.sin(Math.PI*f), u=CELL*cam.scale;
+      ctx.globalAlpha=0.22*(1-up*0.5); ctx.fillStyle=PAL.shadow;                     // its little shadow tracks the ground
+      ctx.beginPath(); ctx.ellipse(s.x, s.y, u*0.16, u*0.16*TILT, 0,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha=1;
+      const by=s.y-(p.hz||0)*cam.scale, r=Math.max(3, u*0.2*(1+0.45*up));            // swells to the apex
+      ctx.translate(s.x, by); ctx.rotate((p.spin||0)+f*7);                           // and tumbles as it flies
+      rect(-r, -r*0.35, r*2, r*0.7, PAL.trunk);                                      // the log
+      rect(-r, -r*0.35, r*0.45, r*0.7, PAL.pWood); } }                               // pale cut end
     else if(p.kind==='smoke'){ const t=1-p.life/p.max, r=(p.size+p.grow*t)*cam.scale;
       ctx.globalAlpha=a*0.5; circle(s.x, s.y - p.hz*cam.scale, Math.max(1,r), p.color); }
     else if(p.kind==='fish'){
@@ -6590,7 +6615,7 @@ function netApplySnap(m){                              // world portion of a sna
 function netClearWorldForGuest(){ goblins.length=0; allDeer.length=0; pendingDeer.length=0; pendingGoblins.length=0; turtles.length=0; }
 function netOnData(m, fromClient){
   if(!m||!m.t) return;
-  const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1};
+  const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1, wlob:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
   const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
@@ -6618,6 +6643,7 @@ function netOnData(m, fromClient){
   else if(m.t==='vfx'){ net._vfxIn=true; try{ spawnBlood(m.x, m.y, m.n, !!m.big); }finally{ net._vfxIn=false; } }   // blood from the other side, visual only
   else if(m.t==='bfx'){ addParticle({kind:'boulder', x:m.x0, y:m.y0, x0:m.x0, y0:m.y0, tx:m.tx, ty:m.ty, t:0, dur:m.dur, life:99, max:99, arc:m.arc, fx:true}); }   // the boss's boulder, mirrored
   else if(m.t==='sfx'){ net._vfxIn=true; try{ spawnSoulFX(m.x, m.y, m.n); }finally{ net._vfxIn=false; } }   // the other player's soul harvest, mirrored
+  else if(m.t==='wlob'){ spawnWoodLob(+m.x0||0, +m.y0||0, +m.tx||0, +m.ty||0, Math.min(5, m.n|0)); }        // their donated logs arc on YOUR screen too
   else if(m.t==='bossKill'){ grantBossReward(); }                                               // the boss fell — everyone shares the hoard
   else if(m.t==='kingKill'){ grantKingReward(); }                                               // the king fell — a fortune for all
   else if(m.t==='mined'){ if(net.mode==='host' && mapMode==='dungeon' && world.rocks && world.rocks[m.i]){ const r=world.rocks[m.i];
