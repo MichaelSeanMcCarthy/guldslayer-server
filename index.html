@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-26 · d';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · a';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -163,7 +163,7 @@ const CARDS={
 };
 const TRAIN_SECS=5*60;                       // training-in: a newly slotted card pays nothing for 5 minutes
 const cardUI={ open:false, pulse:0, unseen:0 };     // unseen = cards gained since the Mind was last opened
-function gridSquares(){ return Math.min(25, 5+Math.floor((player.level||1)/5)); }   // 5 → 25 across the career
+function gridSquares(){ return Math.min(25, 10+Math.floor((player.level||1)/5)); }   // 10 → 25 across the career: room for two Commons from day one
 function gridUsed(){ let u=0; for(const id in (player.cards||{})){ const c=player.cards[id]; if(c.trained) u+=CARD_TIERS[c.tier].sq; } return u; }
 function cardVal(id){                        // the live bonus of one card — 0 unless trained-in AND fed
   const c=player.cards&&player.cards[id]; if(!c||!c.trained||c.trainT>0) return 0;
@@ -197,7 +197,7 @@ function trainCard(id){                      // Memory → Trained, if the grid 
   if(need>free) return 'No room in the grid — needs '+need+', '+free+' free';
   c.trained=true; c.trainT=TRAIN_SECS; return null;
 }
-function forgetCard(id){ const c=player.cards&&player.cards[id]; if(c&&c.trained){ c.trained=false; c.trainT=0; } }  // back to Memory — forgetting is free
+function forgetCard(id){ if(player.cards && player.cards[id] && player.cards[id].trained) delete player.cards[id]; }  // cards are CONSUMABLE: forgetting destroys the card for good
 function updateCards(dt){
   for(const id in (player.cards||{})){ const c=player.cards[id];
     if(c.trained&&c.trainT>0){ c.trainT-=dt;
@@ -4711,8 +4711,7 @@ function draw(){
   if(!player.dead){
     drawToolBar();          // tool buttons, bottom-centre
     drawInventory();        // wood count, left (only when you have wood)
-    drawInvButton();        // satchel, bottom-right → opens the inventory screen
-    drawBrainButton();      // the Mind, above the satchel → opens the brain grid
+    drawInvButton();        // satchel, bottom-right → opens the hero menu (equipment · inventory · stats · mind · map)
     drawTradeIcon();        // the handshake over a would-be trade partner
     drawBuildGhost();       // ground-select: the building's placement ghost
   }
@@ -4726,10 +4725,9 @@ function draw(){
   if(!player.dead){         // modal panels paint LAST — nothing (minimap, dial, hearts) may cover them
     drawShopUI();           // crafting modal, when the shop is open
     drawAltarUI();          // altar rites, when communing at the henge
-    drawInvUI();            // inventory screen, when open
+    drawMenuUI();           // the hero menu, when open
     drawBuildUI();          // the building catalog
     drawSiteUI();           // a build site's progress panel
-    drawCardUI();           // the Mind — the brain grid of training cards
     drawTradeUI();          // the trade table, when bartering with another player
     drawDropUI();           // the drop picker — what to set down, and how many
     drawBagUI();            // a dropped bag's contents
@@ -5509,38 +5507,28 @@ const ARMOR_DEFS = [
   { k:'leggings', name:'Leather Leggings', prot:1, eq:'eqLeggings' },
 ];
 function invButtonBox(){ const s=Math.max(76, 56*DPR)*1.3; return { x:canvas.width-s*1.15, y:canvas.height-s*1.2, w:s, h:s }; }   // 30% larger, floating free
-function invLayout(){
+/* --- THE HERO MENU: one satchel button, five views — Equipment · Inventory · Stats · Mind · Map --- */
+const menuUI={ open:false, tab:'equip' };
+function menuLayout(){
   const W=canvas.width, H=canvas.height;
-  const pw=Math.min(W*0.94, Math.max(640, 620*DPR)), ph=Math.min(H*0.88, Math.max(440, 430*DPR));
-  const px=(W-pw)/2, py=(H-ph)/2, pad=pw*0.028, headH=ph*0.1;
-  const leftW=pw*0.42;
-  const s=Math.min(leftW*0.24, (ph-headH-pad*2)/5.6);            // slot size: 5 rows fit
-  const rowH=s*1.12, sy=py+headH+pad*0.5;
-  const colA=px+pad, colB=px+leftW-pad-s;
-  const slots=[];
-  for(let i=0;i<5;i++) slots.push({ def:SLOT_DEFS[i],   x:colA, y:sy+i*rowH, w:s, h:s });
-  for(let i=0;i<5;i++) slots.push({ def:SLOT_DEFS[5+i], x:colB, y:sy+i*rowH, w:s, h:s });
-  const hero={ x:px+leftW/2, y:sy+rowH*4.2, u:Math.min(leftW*0.3, ph*0.2) };
-  // right side: tabs + grid
-  const rx=px+leftW+pad*0.5, rw=pw-leftW-pad*1.5;
-  const tabH=headH*0.72, tabW=rw*0.29;
-  const tabs=[ {key:'weapons', name:'Weapons', x:rx, y:py+headH*1.02, w:tabW, h:tabH},
-               {key:'armor', name:'Armor', x:rx+tabW+pad*0.3, y:py+headH*1.02, w:tabW, h:tabH},
-               {key:'resources', name:'Resources', x:rx+(tabW+pad*0.3)*2, y:py+headH*1.02, w:tabW, h:tabH} ];
-  const gy=tabs[0].y+tabH+pad*0.5, cols=3, gW=(rw-pad*(cols-1)*0.4)/cols, gH=gW*0.72;
-  const list = invUI.tab==='weapons'
-    ? WEAPON_DEFS.filter(w=>player[w.k]>0).map(w=>({kind:'weapon', def:w}))
-    : invUI.tab==='armor'
-    ? ARMOR_DEFS.filter(a=>player[a.k]>0).map(a=>({kind:'armor', def:a}))
-    : RESOURCE_DEFS.filter(([k])=>player[k]>0).map(([k,name])=>({kind:'res', k, name}));
-  const cells=list.map((it,i)=>({ it, x:rx+(i%cols)*(gW+pad*0.4), y:gy+((i/cols)|0)*(gH+pad*0.4), w:gW, h:gH }));
-  const closeBtn={ x:px+pw-headH*0.9, y:py+headH*0.18, w:headH*0.66, h:headH*0.66 };
-  return { px,py,pw,ph,pad,headH,leftW,slots,hero,tabs,cells,closeBtn };
+  const pw=Math.min(W*0.94, Math.max(680, 640*DPR)), ph=Math.min(H*0.9, Math.max(470, 450*DPR));
+  const px=(W-pw)/2, py=(H-ph)/2, pad=pw*0.028;
+  const mtH=Math.max(34,32*DPR), cs=Math.max(26,26*DPR);
+  const closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.6+(mtH-cs)/2, w:cs, h:cs };
+  const names={ equip:'Equipment', items:'Inventory', stats:'Stats', cards:'Mind', map:'Map' };
+  const keys=['equip','items','stats','cards','map'];
+  const tw=(closeBtn.x-pad*0.5-(px+pad))/keys.length;
+  const tabs=keys.map((k,i)=>({ key:k, name:names[k], x:px+pad+i*tw, y:py+pad*0.6, w:tw-pad*0.22, h:mtH }));
+  const cx=px+pad, cy=py+pad*0.6+mtH+pad*0.6, cw=pw-pad*2, ch=py+ph-pad-cy;
+  return { px,py,pw,ph,pad,tabs,closeBtn,cx,cy,cw,ch };
 }
-function drawInvButton(){                              // a leather satchel floating free, bottom-right
-  if(invUI.open || shopUI.open) return;
+function drawInvButton(){                              // the satchel, bottom-right — the ONE door to the hero menu
+  if(menuUI.open || shopUI.open) return;
   const B=invButtonBox(), cx=B.x+B.w/2, cy=B.y+B.h/2, s=B.w;
   ctx.save();
+  if(cardUI.unseen>0){ const p=0.5+0.5*Math.sin(animT*7);         // an UNSEEN card calls from inside the pack
+    ctx.strokeStyle='rgba(255,212,77,'+(0.35+0.5*p)+')'; ctx.lineWidth=Math.max(3,DPR*2.5);
+    ctx.beginPath(); ctx.arc(cx, cy, s*0.52, 0, Math.PI*2); ctx.stroke(); }
   ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=s*0.1; ctx.shadowOffsetY=s*0.05;               // soft drop shadow instead of a panel
   ctx.fillStyle='#8a5a34';
   ctx.beginPath(); ctx.roundRect(cx-s*0.34, cy-s*0.16, s*0.68, s*0.48, s*0.09); ctx.fill();         // bag body
@@ -5550,29 +5538,9 @@ function drawInvButton(){                              // a leather satchel floa
   circle(cx, cy+s*0.03, s*0.06, '#e7c877');                                                          // clasp
   ctx.strokeStyle='#6e4526'; ctx.lineWidth=Math.max(2.5,DPR*2);
   ctx.beginPath(); ctx.arc(cx, cy-s*0.19, s*0.19, Math.PI, 0); ctx.stroke();                         // strap
-  ctx.restore();
-}
-function brainButtonBox(){ const B=invButtonBox(), s=B.w*0.78; return { x:B.x+(B.w-s)/2, y:B.y-s*1.12, w:s, h:s }; }
-function drawBrainButton(){                            // the Mind — a little pink brain above the satchel
-  if(invUI.open || shopUI.open || cardUI.open) return;
-  const B=brainButtonBox(), cx=B.x+B.w/2, cy=B.y+B.h/2, s=B.w;
-  ctx.save();
-  if(cardUI.unseen>0){ const p=0.5+0.5*Math.sin(animT*7);         // an UNSEEN card calls for attention — until you look
-    ctx.strokeStyle='rgba(255,212,77,'+(0.35+0.5*p)+')'; ctx.lineWidth=Math.max(3,DPR*2.5);
-    ctx.beginPath(); ctx.arc(cx, cy, s*0.52, 0, Math.PI*2); ctx.stroke(); }
-  ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=s*0.1; ctx.shadowOffsetY=s*0.05;
-  circle(cx-s*0.14, cy-s*0.02, s*0.26, '#d98ba0');               // two lobes
-  circle(cx+s*0.14, cy-s*0.02, s*0.26, '#d98ba0');
-  circle(cx, cy-s*0.12, s*0.24, '#e3a0b3');
-  ctx.shadowColor='transparent';
-  ctx.strokeStyle='#b76a83'; ctx.lineWidth=Math.max(2,DPR*1.6);  // folds
-  ctx.beginPath(); ctx.moveTo(cx, cy-s*0.32); ctx.lineTo(cx, cy+s*0.16); ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx-s*0.14, cy-s*0.04, s*0.13, 0.4, 2.6); ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx+s*0.14, cy-s*0.04, s*0.13, 0.6, 2.8); ctx.stroke();
-  rect(cx-s*0.10, cy+s*0.18, s*0.20, s*0.10, '#b76a83');         // brain-stem base
-  if(cardUI.unseen>0){ circle(cx+s*0.32, cy-s*0.3, s*0.15, '#ffd44d');   // "N new" badge — clears when you look
+  if(cardUI.unseen>0){ circle(cx+s*0.34, cy-s*0.32, s*0.15, '#ffd44d');   // "N new cards" — clears when you open the Mind tab
     ctx.fillStyle='#3a2412'; ctx.font='bold '+Math.round(s*0.2)+'px system-ui, sans-serif';
-    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(cardUI.unseen, cx+s*0.32, cy-s*0.29); }
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(cardUI.unseen, cx+s*0.34, cy-s*0.31); }
   ctx.restore();
 }
 function drawCardArt(id, cx, cy, s){                   // cute little icon art, one per card
@@ -5644,37 +5612,24 @@ function drawMiniCard(id, c, x, y, w, h){              // a tiny trading card: t
   ctx.fillText(T.sq, x+w/2, y+h*0.89);
   ctx.restore();
 }
-let _cardL=null;
-function drawCardUI(){                                 // THE MIND: the 5×5 brain grid + every card you own
-  if(!cardUI.open){ _cardL=null; return; }
+let _cardRows=null;
+function drawCardsTab(M){                              // THE MIND — the brain grid + every card, one tab of the hero menu
   const owned=Object.keys(player.cards||{});
   owned.sort((a,b)=> (player.cards[b].trained?1:0)-(player.cards[a].trained?1:0) || player.cards[b].tier-player.cards[a].tier);
-  const pw=Math.min(canvas.width*0.94, Math.max(560, 470*DPR));
-  const headH=Math.max(44,42*DPR), gridH=Math.max(96,88*DPR), footH=Math.max(24,20*DPR);
-  const roomH=canvas.height*0.94-headH-gridH-footH;                              // rows share what's left
-  const rowH=Math.max(40, Math.min(Math.max(56,50*DPR), roomH/Math.max(1,owned.length)));
-  const ph=Math.min(canvas.height*0.94, headH+gridH+Math.max(1,owned.length)*rowH+footH);
-  const px=(canvas.width-pw)/2, py=(canvas.height-ph)/2, pad=pw*0.045;
+  const pad=M.pad;
   ctx.save();
-  ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle='#2e1d10'; ctx.strokeStyle='#7a4a1e'; ctx.lineWidth=Math.max(3,DPR*2);
-  ctx.beginPath(); ctx.roundRect(px,py,pw,ph,18); ctx.fill(); ctx.stroke();
-  const cs=Math.max(22,24*DPR), closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.55, w:cs, h:cs };
-  ctx.strokeStyle='#cfae7a'; ctx.lineWidth=Math.max(2.5,DPR*2);
-  ctx.beginPath(); ctx.moveTo(closeBtn.x+4,closeBtn.y+4); ctx.lineTo(closeBtn.x+cs-4,closeBtn.y+cs-4);
-  ctx.moveTo(closeBtn.x+cs-4,closeBtn.y+4); ctx.lineTo(closeBtn.x+4,closeBtn.y+cs-4); ctx.stroke();
-  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(17,16*DPR))+'px system-ui, sans-serif';
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(15,14*DPR))+'px system-ui, sans-serif';
   ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.fillText('The Mind', px+pad, py+headH*0.55);
+  ctx.fillText('The Mind', M.cx, M.cy+Math.max(9,8*DPR));
   ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(12,11*DPR))+'px system-ui, sans-serif';
-  ctx.fillText(gridUsed()+' / '+gridSquares()+' squares trained · the grid grows +1 every 5 levels', px+pad+Math.max(96,90*DPR), py+headH*0.58);
+  ctx.fillText(gridUsed()+' / '+gridSquares()+' squares trained · the grid grows +1 every 5 levels', M.cx+Math.max(96,90*DPR), M.cy+Math.max(10,9*DPR));
   // --- the 5×5 grid, filled square by square with each trained card's colour ---
-  const gy=py+headH, cell=Math.min((gridH-14)/1.0, Math.max(14,13*DPR)), gap=Math.max(2,2*DPR);
-  const gx=px+pad, cols=5;
+  const gy=M.cy+Math.max(26,24*DPR), cell=Math.max(14,13*DPR), gap=Math.max(2,2*DPR);
+  const gx=M.cx, cols=5;
   const fills=[]; for(const id of owned){ const c=player.cards[id]; if(!c.trained) continue;
     for(let i=0;i<CARD_TIERS[c.tier].sq;i++) fills.push({col:CARD_TIERS[c.tier].col, dim:c.trainT>0}); }
   for(let i=0;i<25;i++){ const r2=Math.floor(i/cols), col2=i%cols;
-    const x=gx+col2*(cell+gap), y=gy+r2*(cell+gap)*0.72;         // squash rows a little to fit gridH
+    const x=gx+col2*(cell+gap), y=gy+r2*(cell+gap)*0.72;         // squash rows a little
     const h2=cell*0.72;
     if(i>=gridSquares()){ rect(x,y,cell,h2,'#241609');           // locked — the mind has yet to grow
       ctx.strokeStyle='#3a2a18'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
@@ -5687,17 +5642,19 @@ function drawCardUI(){                                 // THE MIND: the 5×5 bra
   // legend beside the grid
   ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(11,10*DPR))+'px system-ui, sans-serif';
   ctx.fillText('Rarer cards take FEWER squares and work a little harder.', gx+5*(cell+gap)+pad*0.6, gy+cell*0.5);
-  ctx.fillText('Training a card takes '+(TRAIN_SECS/60)+' min before it pays. Forgetting is free.', gx+5*(cell+gap)+pad*0.6, gy+cell*1.35);
+  ctx.fillText('Training a card takes '+(TRAIN_SECS/60)+' min before it pays. Forgetting DESTROYS it.', gx+5*(cell+gap)+pad*0.6, gy+cell*1.35);
   ctx.fillText('Starving switches every card off.', gx+5*(cell+gap)+pad*0.6, gy+cell*2.2);
   // --- the card rows ---
-  const rows=[]; let y=py+headH+gridH;
+  const rows=[]; let y=gy+5*(cell+gap)*0.72+pad*0.7;
+  const roomH=M.cy+M.ch-y;
+  const rowH=Math.max(32, Math.min(Math.max(56,50*DPR), roomH/Math.max(1,owned.length)));
   if(!owned.length){ ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(13,12*DPR))+'px system-ui, sans-serif';
-    ctx.fillText('No cards yet — they drop from goblins, bosses, and the Guild.', px+pad, y+rowH*0.6); }
+    ctx.fillText('No cards yet — they drop from goblins, bosses, and the Guild.', M.cx, y+rowH*0.6); }
   for(const id of owned){
     const c=player.cards[id], T=CARD_TIERS[c.tier], def=CARDS[id];
-    const ch=rowH*0.92, cw=ch*0.74;
-    drawMiniCard(id, c, px+pad, y+rowH*0.5-ch/2, cw, ch);                         // the little card itself
-    const tx=px+pad+cw+Math.max(10,9*DPR);
+    const ch2=rowH*0.92, cw2=ch2*0.74;
+    drawMiniCard(id, c, M.cx, y+rowH*0.5-ch2/2, cw2, ch2);                        // the little card itself
+    const tx=M.cx+cw2+Math.max(10,9*DPR);
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle = c.trained&&c.trainT<=0 ? '#ffdf9e' : '#d8c6a6';
     ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
@@ -5705,8 +5662,8 @@ function drawCardUI(){                                 // THE MIND: the 5×5 bra
     ctx.fillStyle='#b3a084'; ctx.font=Math.round(Math.max(11,10.5*DPR))+'px system-ui, sans-serif';
     const status = !c.trained ? 'in Memory' : c.trainT>0 ? 'training… '+Math.ceil(c.trainT/60)+' min' : 'trained';
     ctx.fillText(def.txt(def.base*T.eff)+' — '+status, tx, y+rowH*0.72);
-    const bw=Math.max(72,64*DPR), bh=Math.max(26,24*DPR);
-    const btn={ x:px+pw-pad-bw, y:y+rowH*0.5-bh/2, w:bw, h:bh };
+    const bw=Math.max(72,64*DPR), bh=Math.max(24,22*DPR);
+    const btn={ x:M.cx+M.cw-bw, y:y+rowH*0.5-bh/2, w:bw, h:bh };
     const canTrain = !c.trained && (gridUsed()+T.sq<=gridSquares());
     ctx.fillStyle = c.trained ? '#8a4a3a' : canTrain ? '#3f7d3f' : '#4a4038';
     ctx.beginPath(); ctx.roundRect(btn.x,btn.y,btn.w,btn.h,7); ctx.fill();
@@ -5717,17 +5674,7 @@ function drawCardUI(){                                 // THE MIND: the 5×5 bra
     y+=rowH;
   }
   ctx.restore();
-  _cardL={ panel:{x:px,y:py,w:pw,h:ph}, closeBtn, rows };
-}
-function cardUIClick(cx,cy){
-  const L=_cardL; if(!L){ cardUI.open=false; return; }
-  const inside=(b)=> cx>=b.x&&cx<=b.x+b.w&&cy>=b.y&&cy<=b.y+b.h;
-  if(inside(L.closeBtn) || !inside(L.panel)){ cardUI.open=false; return; }
-  for(const r2 of L.rows){ if(inside(r2.btn)){
-    const c=player.cards[r2.id];
-    if(c.trained) forgetCard(r2.id);
-    else { const err=trainCard(r2.id); if(err&&err!=='already') addFloat(err, player.px, player.py-CELL*2.0, '#e08a8a'); }
-    return; } }
+  _cardRows=rows;
 }
 function drawResourceIcon(key, x, y, s){               // small icons for the resources tab
   if(key==='wood'){ rect(x-s*0.4,y-s*0.05,s*0.8,s*0.26,PAL.trunk); rect(x-s*0.28,y-s*0.3,s*0.8,s*0.26,PAL.pWood); }
@@ -5756,33 +5703,121 @@ function drawResourceIcon(key, x, y, s){               // small icons for the re
     ctx.strokeStyle='#5a3d6e'; ctx.lineWidth=Math.max(1,s*0.05);
     ctx.beginPath(); ctx.ellipse(x,y,s*0.42,s*0.26,0,0,Math.PI*2); ctx.stroke(); }
 }
-function drawInvUI(){
-  if(!invUI.open) return;
-  const L=invLayout();
+let _menuL=null, _invSlots=null, _invCells=null, _invTabs=null;
+function drawMenuUI(){                                 // the hero menu \u2014 one panel, five tabs
+  if(!menuUI.open){ _menuL=null; _cardRows=null; return; }
+  const M=menuLayout();
   ctx.save();
   ctx.globalAlpha=0.55; rect(0,0,canvas.width,canvas.height, PAL.panelBg); ctx.globalAlpha=1;
-  rect(L.px, L.py, L.pw, L.ph, PAL.panelBg);
-  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(L.px,L.py,L.pw,L.ph);
-  ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.font='bold '+Math.round(Math.max(18, L.headH*0.42))+'px system-ui, sans-serif';
-  ctx.fillText(packName(), L.px+L.pad, L.py+L.headH*0.5);
-  const _pnw=ctx.measureText(packName()).width, _w=packWeight(), _cap=carryCap(), _u=packTypesUsed(), _s=packSlots();
-  ctx.font=Math.round(Math.max(12, L.headH*0.26))+'px system-ui, sans-serif';
-  ctx.fillStyle=(_w>_cap||_u>=_s)?'#e2493a':PAL.shopWall;
-  ctx.fillText(_w+' / '+_cap+' lbs   \u00b7   '+_u+' / '+_s+' slots', L.px+L.pad+_pnw+Math.max(12,L.headH*0.3), L.py+L.headH*0.52);
-  const _dbw=Math.max(70,64*DPR), _dbh=Math.max(27,25*DPR);                              // the DROP button, beside the X
-  _invDropBtn={ x:L.closeBtn.x-_dbw-Math.max(12,10*DPR), y:L.closeBtn.y+(L.closeBtn.h-_dbh)/2, w:_dbw, h:_dbh };
-  ctx.fillStyle='#8a4a3a'; ctx.beginPath(); ctx.roundRect(_invDropBtn.x,_invDropBtn.y,_dbw,_dbh,8); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(_dbh*0.48)+'px system-ui, sans-serif';
-  ctx.textAlign='center'; ctx.fillText('DROP', _invDropBtn.x+_dbw/2, _invDropBtn.y+_dbh*0.56);
-  ctx.textAlign='left';
-  ctx.fillStyle=PAL.panelHi;
-  // hero, centered between the slot columns
-  const sv=cam.scale, sf=player.face; cam.scale=L.hero.u/CELL; player.face='S';
-  drawPerson({x:L.hero.x, y:L.hero.y}); cam.scale=sv; player.face=sf;
-  // equipment slots
-  const fs=Math.max(9, L.slots[0].w*0.2);
-  for(const sl of L.slots){
+  rect(M.px, M.py, M.pw, M.ph, PAL.panelBg);
+  ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(M.px,M.py,M.pw,M.ph);
+  for(const t of M.tabs){                              // the five doors
+    const on=menuUI.tab===t.key;
+    rect(t.x, t.y, t.w, t.h, on?PAL.shopRoof:PAL.shopWallSh);
+    ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.strokeRect(t.x,t.y,t.w,t.h);
+    ctx.fillStyle=on?PAL.panelHi:PAL.dirt; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font='bold '+Math.round(Math.min(t.h*0.42, t.w*0.17))+'px system-ui, sans-serif';
+    ctx.fillText(t.name, t.x+t.w/2, t.y+t.h/2);
+    if(t.key==='cards' && cardUI.unseen>0){ circle(t.x+t.w-8*DPR, t.y+2, Math.max(7,7*DPR), '#ffd44d');   // new cards wait behind this tab
+      ctx.fillStyle='#3a2412'; ctx.font='bold '+Math.round(Math.max(9,9*DPR))+'px system-ui, sans-serif';
+      ctx.fillText(cardUI.unseen, t.x+t.w-8*DPR, t.y+3); }
+  }
+  const C=M.closeBtn;
+  rect(C.x,C.y,C.w,C.h,PAL.shopRoof); ctx.strokeStyle=PAL.panelEdge; ctx.strokeRect(C.x,C.y,C.w,C.h);
+  ctx.fillStyle=PAL.panelHi; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font='bold '+Math.round(C.h*0.55)+'px system-ui, sans-serif'; ctx.fillText('\u2715', C.x+C.w/2, C.y+C.h/2);
+  _invDropBtn=null; _invSlots=null; _invCells=null; _invTabs=null;
+  if(menuUI.tab!=='cards') _cardRows=null;
+  if(menuUI.tab==='equip') drawEquipTab(M);
+  else if(menuUI.tab==='items') drawItemsTab(M);
+  else if(menuUI.tab==='stats') drawStatsTab(M);
+  else if(menuUI.tab==='cards') drawCardsTab(M);
+  else if(menuUI.tab==='map') drawMapTab(M);
+  ctx.restore();
+  _menuL=M;
+}
+function drawStatsTab(M){                              // the hero, in numbers
+  const lh=Math.min(Math.max(24,22*DPR), M.ch/13.5), x=M.cx;
+  const rname=(player.race||'human'), cap=(player.level||1)>=RELEASE.capLevel;
+  ctx.textBaseline='middle';
+  const label=(y,k,v,vc)=>{ ctx.textAlign='left'; ctx.fillStyle='#c9b391';
+    ctx.font=Math.round(Math.max(12,11.5*DPR))+'px system-ui, sans-serif'; ctx.fillText(k, x, y);
+    ctx.fillStyle=vc||'#ffdf9e'; ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
+    ctx.fillText(v, x+M.cw*0.2, y); };
+  let y=M.cy+lh*0.6;
+  label(y, 'Race', rname==='halforc'?'Half-Orc':rname.charAt(0).toUpperCase()+rname.slice(1)); y+=lh;
+  label(y, 'Level', (player.level||1)+(cap?'  (cap for now)':'')); y+=lh;
+  label(y, 'XP', cap?'MAX':((player.xp||0)+' / '+xpForLevel(player.level||1))); y+=lh;
+  label(y, 'Hearts', Math.ceil(player.hp)+' / '+player.hpMax, player.hp<=player.hpMax*0.3?'#e2493a':undefined); y+=lh;
+  label(y, 'Hunger', Math.round(player.stamina)+' / 100'+(player.stamina<=0?'  \u00b7 STARVING':''), player.stamina<=0?'#e2493a':undefined); y+=lh;
+  const ov=overloadFactor();
+  label(y, 'Pack', packWeight()+' / '+carryCap()+' lbs \u00b7 '+packTypesUsed()+' / '+packSlots()+' slots', ov<1?'#e2493a':undefined); y+=lh;
+  const spd=(player.speedMul||1)*(1+cardVal('fleetfoot'))*ov;
+  label(y, 'Speed', ov<=0?'PINNED \u2014 too heavy':('\u00d7'+spd.toFixed(2)+(ov<1?'  (overloaded)':''))); y+=lh;
+  label(y, 'Armor', 'blocks '+armorBlock()+' DMG'); y+=lh;
+  label(y, 'Damage', '\u00d7'+dmgMul().toFixed(2)); y+=lh;
+  label(y, 'Attack rhythm', 'cooldown \u00d7'+coolMul().toFixed(2)); y+=lh;
+  label(y, 'Aim', Math.round(missChance()*100)+'% miss'); y+=lh;
+  label(y, 'Regeneration', '\u00d7'+regenMul().toFixed(2)+' (fed only)'); y+=lh;
+  label(y, 'Mind', gridUsed()+' / '+gridSquares()+' squares trained'); y+=lh;
+  // race arrows, right column \u2014 the tuner-fixed table (\u00a713)
+  const ax=M.cx+M.cw*0.56; let ay=M.cy+lh*0.6;
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
+  ctx.textAlign='left'; ctx.fillText('Race Arrows', ax, ay); ay+=lh;
+  const AR=RACE_ARROWS[rname]||RACE_ARROWS.human;
+  const AL={hp:'Hearts', regen:'Regen', move:'Move', dmg:'Damage', cool:'Cooldown', aggro:'Stealth', acc:'Accuracy'};
+  for(const k of ['hp','regen','move','dmg','cool','aggro','acc']){
+    const n=AR[k]||0;
+    ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(12,11.5*DPR))+'px system-ui, sans-serif';
+    ctx.fillText(AL[k], ax, ay);
+    ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
+    ctx.fillStyle = n>0?'#7fd68a':n<0?'#e2493a':'#6b5c48';
+    ctx.fillText(n===0?'\u2014':(n>0?'\u25b2'.repeat(n):'\u25bc'.repeat(-n)), ax+M.cw*0.18, ay);
+    ay+=lh*0.92;
+  }
+}
+function drawMapTab(M){                                // the whole world, writ large
+  if(!mmCanvas || mmFor!==mapMode) buildMinimap();
+  const sz=Math.min(M.cw, M.ch), mx=M.cx+(M.cw-sz)/2, my=M.cy+(M.ch-sz)/2;
+  const PX=4, pxc=sz/GRID;
+  ctx.save();
+  ctx.beginPath(); ctx.roundRect(mx,my,sz,sz,8*DPR); ctx.clip();
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(mmCanvas, 0,0, GRID*PX, GRID*PX, mx,my, sz,sz);
+  if(mapMode==='forest'){ const dark=nightDarkness(); if(dark>0.005){ ctx.fillStyle='rgba(13,17,46,'+(dark*0.6).toFixed(3)+')'; ctx.fillRect(mx,my,sz,sz); } }
+  const dot=(wx,wy,r,col)=> circle(mx+(wx/CELL)*pxc, my+(wy/CELL)*pxc, r, col);
+  const sq2=(wx,wy,r,col,hollow)=>{ const dx=mx+(wx/CELL)*pxc, dy=my+(wy/CELL)*pxc;
+    if(hollow){ ctx.strokeStyle=col; ctx.lineWidth=Math.max(1.5,DPR*1.2); ctx.strokeRect(dx-r,dy-r,r*2,r*2); }
+    else { ctx.fillStyle=col; ctx.fillRect(dx-r,dy-r,r*2,r*2); } };
+  if(mapMode==='forest'){
+    for(const b of (world.builtBridges||[])) sq2((b[0]*TILE+1.5)*CELL, (b[1]*TILE+1.5)*CELL, Math.max(2,2.2*DPR), '#a97b48');
+    for(const B2 of [shop, stall, butcher, armorShop]){ if(!B2 || !B2.placed) continue;
+      sq2((B2.x+(B2.w||3)/2)*CELL, (B2.y+(B2.h||3)/2)*CELL, Math.max(2.5,3*DPR), '#d6d6d6'); }
+    for(const s of (world.sites||[])){ const n2=BUILDINGS[s.kind].tiles*TILE;
+      sq2((s.tx*TILE+n2/2)*CELL, (s.ty*TILE+n2/2)*CELL, Math.max(2.5,3*DPR), '#b8b8b8', true); }
+    for(const b of (world.bags||[])) dot((b.x+0.5)*CELL, (b.y+0.5)*CELL, Math.max(2,2.2*DPR), '#e7c877');   // dropped bags glint gold
+  }
+  for(const RP of (typeof remotePlayers==='function'?remotePlayers():[])){
+    if(RP.active && !RP.dead && (RP.map||'forest')===mapMode) dot(RP.px, RP.py, Math.max(3,3.5*DPR), '#6bd3ff'); }
+  for(const g of goblins){ if(g.dead||g.gone) continue;
+    if(g.kind==='boss'||g.kind==='king') dot(g.px, g.py, Math.max(3,3.5*DPR), '#d43a2a'); }
+  dot(player.px, player.py, Math.max(3.5,4*DPR), '#ffffff');
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(2,DPR*1.8);
+  ctx.beginPath(); ctx.roundRect(mx,my,sz,sz,8*DPR); ctx.stroke(); ctx.restore();
+}
+function drawEquipTab(M){                              // what's worn and wielded, the hero between the columns
+  const s=Math.min(M.cw*0.14, M.ch/5.8), rowH=s*1.12, sy=M.cy+(M.ch-5*rowH)/2+rowH*0.05;
+  const colA=M.cx+M.cw*0.08, colB=M.cx+M.cw*0.92-s;
+  const slots=[];
+  for(let i=0;i<5;i++) slots.push({ def:SLOT_DEFS[i],   x:colA, y:sy+i*rowH, w:s, h:s });
+  for(let i=0;i<5;i++) slots.push({ def:SLOT_DEFS[5+i], x:colB, y:sy+i*rowH, w:s, h:s });
+  const hero={ x:M.cx+M.cw/2, y:sy+rowH*4.1, u:Math.min(M.cw*0.16, M.ch*0.24) };
+  const sv=cam.scale, sf=player.face; cam.scale=hero.u/CELL; player.face='S';
+  drawPerson({x:hero.x, y:hero.y}); cam.scale=sv; player.face=sf;
+  _invSlots=slots;
+  const fs=Math.max(9, slots[0].w*0.2);
+  for(const sl of slots){
     const item=sl.def.item(), ghost=!item && sl.def.ghost();
     rect(sl.x, sl.y, sl.w, sl.h, item?PAL.shopWallSh:'rgba(255,255,255,.05)');
     ctx.strokeStyle=item?PAL.shopRoof:PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.strokeRect(sl.x,sl.y,sl.w,sl.h);
@@ -5797,15 +5832,42 @@ function drawInvUI(){
     ctx.font=Math.round(fs)+'px system-ui, sans-serif';
     ctx.fillText(sl.def.name, sl.x+sl.w/2, sl.y+sl.h-fs*0.7);
   }
-  // tabs
-  for(const t of L.tabs){
+}
+function drawItemsTab(M){                              // everything carried: weapons · armor · resources
+  ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.font='bold '+Math.round(Math.max(15,14*DPR))+'px system-ui, sans-serif';
+  ctx.fillText(packName(), M.cx, M.cy+Math.max(10,9*DPR));
+  const _pnw=ctx.measureText(packName()).width, _w=packWeight(), _cap=carryCap(), _u=packTypesUsed(), _s=packSlots();
+  ctx.font=Math.round(Math.max(12,11*DPR))+'px system-ui, sans-serif';
+  ctx.fillStyle=(_w>_cap||_u>=_s)?'#e2493a':PAL.shopWall;
+  ctx.fillText(_w+' / '+_cap+' lbs   ·   '+_u+' / '+_s+' slots', M.cx+_pnw+Math.max(12,10*DPR), M.cy+Math.max(11,10*DPR));
+  const _dbw=Math.max(70,64*DPR), _dbh=Math.max(26,24*DPR);                              // the DROP button, top-right
+  _invDropBtn={ x:M.cx+M.cw-_dbw, y:M.cy, w:_dbw, h:_dbh };
+  ctx.fillStyle='#8a4a3a'; ctx.beginPath(); ctx.roundRect(_invDropBtn.x,_invDropBtn.y,_dbw,_dbh,8); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(_dbh*0.48)+'px system-ui, sans-serif';
+  ctx.textAlign='center'; ctx.fillText('DROP', _invDropBtn.x+_dbw/2, _invDropBtn.y+_dbh*0.56);
+  const pad=M.pad, tabH=Math.max(28,26*DPR), tabW=M.cw*0.2;
+  const ty=M.cy+Math.max(26,24*DPR)+pad*0.3;
+  const tabs=[ {key:'weapons',name:'Weapons'}, {key:'armor',name:'Armor'}, {key:'resources',name:'Resources'} ]
+    .map((t,i)=>({ key:t.key, name:t.name, x:M.cx+i*(tabW+pad*0.3), y:ty, w:tabW, h:tabH }));
+  for(const t of tabs){
     const on=invUI.tab===t.key;
     rect(t.x, t.y, t.w, t.h, on?PAL.shopRoof:PAL.shopWallSh);
     ctx.strokeStyle=PAL.panelEdge; ctx.lineWidth=Math.max(1.5,DPR*1.4); ctx.strokeRect(t.x,t.y,t.w,t.h);
     ctx.fillStyle=on?PAL.panelHi:PAL.dirt; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.font='bold '+Math.round(t.h*0.4)+'px system-ui, sans-serif';
+    ctx.font='bold '+Math.round(t.h*0.42)+'px system-ui, sans-serif';
     ctx.fillText(t.name, t.x+t.w/2, t.y+t.h/2);
   }
+  _invTabs=tabs;
+  const gy=ty+tabH+pad*0.5, cols=3, gW=(M.cw-pad*(cols-1)*0.4)/cols, gH=Math.max(56,52*DPR);
+  const list = invUI.tab==='weapons'
+    ? WEAPON_DEFS.filter(w=>player[w.k]>0).map(w=>({kind:'weapon', def:w}))
+    : invUI.tab==='armor'
+    ? ARMOR_DEFS.filter(a=>player[a.k]>0).map(a=>({kind:'armor', def:a}))
+    : RESOURCE_DEFS.filter(([k])=>player[k]>0).map(([k,name])=>({kind:'res', k, name}));
+  const cells=list.map((it,i)=>({ it, x:M.cx+(i%cols)*(gW+pad*0.4), y:gy+((i/cols)|0)*(gH+pad*0.4), w:gW, h:gH }));
+  _invCells=cells;
+  const L={ cells, tabs };
   // grid cells
   const fmtW=(v)=>{ const r=Math.round(v*10)/10; return r+' lb'+(r===1?'':'s'); };
   const drawWeight=(c, k, count, yFrac)=>{                     // per-item weight, bottom-right of the cell
@@ -5876,31 +5938,36 @@ function drawInvUI(){
     }
   }
   if(!L.cells.length){ ctx.fillStyle=PAL.dirt; ctx.textAlign='left'; ctx.textBaseline='middle';
-    ctx.font=Math.round(L.headH*0.3)+'px system-ui, sans-serif';
+    ctx.font=Math.round(Math.max(12,11*DPR))+'px system-ui, sans-serif';
     ctx.fillText(invUI.tab==='weapons'?'No weapons yet — visit the weapon shop.':invUI.tab==='armor'?'No armor yet — visit the armor shop.':'Nothing gathered yet.', L.tabs[0].x, L.tabs[0].y+L.tabs[0].h*2); }
-  // close button
-  const C=L.closeBtn;
-  rect(C.x,C.y,C.w,C.h,PAL.shopRoof); ctx.strokeStyle=PAL.panelEdge; ctx.strokeRect(C.x,C.y,C.w,C.h);
-  ctx.fillStyle=PAL.panelHi; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.font='bold '+Math.round(C.h*0.55)+'px system-ui, sans-serif'; ctx.fillText('✕', C.x+C.w/2, C.y+C.h/2);
-  ctx.restore();
 }
 let _invDropBtn=null;
-function invUIClick(cx,cy){
-  const L=invLayout(), inR=(r)=> r && cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
-  if(inR(L.closeBtn)){ invUI.open=false; return; }
-  if(inR(_invDropBtn)){ invUI.open=false; dropUI.open=true; dropUI.k=null; dropUI.n=1; return; }   // DROP → pick something to set down
-  for(const t of L.tabs){ if(inR(t)){ invUI.tab=t.key; return; } }
-  for(const sl of L.slots){ if(inR(sl)){ sl.def.toggle(); return; } }   // tap a slot: unequip what's worn / put on what's owned
-  for(const c of L.cells){ if(c.it.kind==='weapon' && inR(c)){
-    const w=c.it.def;
-    if(w.slot==='melee')  player.equipMelee  = player.equipMelee===w.k ? null : w.k;   // tap toggles equip
-    else                  player.equipRanged = player.equipRanged===w.k ? null : w.k;
+function menuUIClick(cx,cy){                           // one click handler for the whole hero menu
+  const M=_menuL||menuLayout(), inR=(r)=> r && cx>=r.x&&cx<=r.x+r.w&&cy>=r.y&&cy<=r.y+r.h;
+  if(inR(M.closeBtn) || cx<M.px||cx>M.px+M.pw||cy<M.py||cy>M.py+M.ph){ menuUI.open=false; return; }
+  for(const t of M.tabs){ if(inR(t)){ menuUI.tab=t.key;
+    if(t.key==='cards'){ cardUI.unseen=0; cardUI.pulse=0; }              // looking at the Mind clears the badge
     return; } }
-  for(const c of L.cells){ if(c.it.kind==='armor' && inR(c)){ const a=c.it.def; player[a.eq]=player[a.eq]?0:1;
-    if(a.k==='chainmail'&&player.eqChainmail) player.eqArmor=0;                        // chain and leather can't share the body
-    if(a.k==='armor'&&player.eqArmor) player.eqChainmail=0; return; } }   // tap toggles worn
-  if(cx<L.px||cx>L.px+L.pw||cy<L.py||cy>L.py+L.ph) invUI.open=false;     // tap outside closes
+  if(menuUI.tab==='equip' && _invSlots){
+    for(const sl of _invSlots){ if(inR(sl)){ sl.def.toggle(); return; } }   // tap a slot: unequip what's worn / put on what's owned
+  } else if(menuUI.tab==='items'){
+    if(inR(_invDropBtn)){ menuUI.open=false; dropUI.open=true; dropUI.k=null; dropUI.n=1; return; }   // DROP → pick something to set down
+    if(_invTabs) for(const t of _invTabs){ if(inR(t)){ invUI.tab=t.key; return; } }
+    if(_invCells) for(const c of _invCells){ if(!inR(c)) continue;
+      if(c.it.kind==='weapon'){ const w=c.it.def;
+        if(w.slot==='melee')  player.equipMelee  = player.equipMelee===w.k ? null : w.k;   // tap toggles equip
+        else                  player.equipRanged = player.equipRanged===w.k ? null : w.k;
+      } else if(c.it.kind==='armor'){ const a=c.it.def; player[a.eq]=player[a.eq]?0:1;
+        if(a.k==='chainmail'&&player.eqChainmail) player.eqArmor=0;                        // chain and leather can't share the body
+        if(a.k==='armor'&&player.eqArmor) player.eqChainmail=0; }
+      return; }
+  } else if(menuUI.tab==='cards' && _cardRows){
+    for(const r2 of _cardRows){ if(inR(r2.btn)){
+      const c=player.cards[r2.id];
+      if(c.trained) forgetCard(r2.id);
+      else { const err=trainCard(r2.id); if(err&&err!=='already') addFloat(err, player.px, player.py-CELL*2.0, '#e08a8a'); }
+      return; } }
+  }
 }
 /* --- tool bar (screen-space, bottom-centre): axe always; club/bow once crafted --- */
 function toolGroups(){
@@ -6309,8 +6376,7 @@ function endPointer(ev){
       else if(siteUI.open){ siteUIClick(c.x, c.y); } // a build site's panel captures the tap
       else if(shopUI.open){ shopUIClick(c.x, c.y); }      // modal captures the tap
       else if(altarUI.open){ altarClick(c.x, c.y); } // altar rites capture the tap
-      else if(invUI.open){ invUIClick(c.x, c.y); }   // inventory screen captures the tap
-      else if(cardUI.open){ cardUIClick(c.x, c.y); } // the Mind captures the tap
+      else if(menuUI.open){ menuUIClick(c.x, c.y); } // the hero menu captures the tap
       else if(trade.open){ tradeUIClick(c.x, c.y); } // the trade table captures the tap
       else if(dropUI.open){ dropUIClick(c.x, c.y); } // the drop picker captures the tap
       else if(bagUI.open){ bagUIClick(c.x, c.y); }   // a bag's contents capture the tap
@@ -6318,9 +6384,10 @@ function endPointer(ev){
         let hitTool=false;
         if(mmButtonTap(c.x, c.y)) hitTool=true;                                                      // minimap +/- buttons
         const IB=invButtonBox();
-        if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ invUI.open=true; hitTool=true; }   // satchel → open inventory
-        const BB=brainButtonBox();
-        if(!hitTool && c.x>=BB.x&&c.x<=BB.x+BB.w&&c.y>=BB.y&&c.y<=BB.y+BB.h){ cardUI.open=true; cardUI.pulse=0; cardUI.unseen=0; hitTool=true; }   // the Mind → brain grid (and the notification clears)
+        if(!hitTool && c.x>=IB.x&&c.x<=IB.x+IB.w&&c.y>=IB.y&&c.y<=IB.y+IB.h){ menuUI.open=true;   // satchel → open the hero menu
+          if(cardUI.unseen>0) menuUI.tab='cards';                                                 // new cards? open straight onto the Mind
+          if(menuUI.tab==='cards'){ cardUI.unseen=0; cardUI.pulse=0; }
+          hitTool=true; }
         if(!hitTool && _trIconBox && c.x>=_trIconBox.x&&c.x<=_trIconBox.x+_trIconBox.w&&c.y>=_trIconBox.y&&c.y<=_trIconBox.y+_trIconBox.h){
           openTradeWith(_trIconBox.pid); hitTool=true; }                                              // the handshake → open the trade
         for(const b of toolButtons()){ if(hitTool) break; if(c.x>=b.x&&c.x<=b.x+b.w&&c.y>=b.y&&c.y<=b.y+b.h){
