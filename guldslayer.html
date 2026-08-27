@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · l';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · m';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3316,6 +3316,7 @@ function bushGrown(bush){ return bush.grow==null || bush.grow>=1; }             
 function bushAvailable(bush, self){ return bushGrown(bush) && !bushEaten(bush, self); }   // grown & not being eaten right now
 function deerSeek(d){
   if(!world.bushes.length) return false;
+  if(d.seekCD!=null && animT<d.seekCD) return false;   // a recent failed hunt — cool off instead of storming the pathfinder every tick
   const scx=cellOf(d.px), scy=cellOf(d.py);
   const near=world.bushes.slice().sort((a,b)=>
     (Math.hypot(a.x-scx,a.y-scy)-Math.hypot(b.x-scx,b.y-scy)));
@@ -3324,17 +3325,20 @@ function deerSeek(d){
   //   pass 1: allow one another deer is also heading for (first to arrive wins; the loser re-seeks)
   //   pass 2: last resort so a starving deer still moves — accept a still-growing bush, but NEVER
   //           one that's actively being eaten (that bush is about to vanish).
+  let budget=8;                                        // hard cap on A* attempts per call — a whole herd seeking at once must never stall the world
   for(let pass=0; pass<3; pass++){
     let tried=0;
-    for(let i=0;i<near.length && tried<40;i++){
+    for(let i=0;i<near.length && tried<40 && budget>0;i++){
       const b=near[i];
       if(pass<2 && !bushAvailable(b, d)) continue;    // passes 0-1: must be grown & un-eaten
       if(pass===2 && bushEaten(b, d)) continue;        // pass 2: still refuse a bush being eaten
       if(pass===0 && bushClaimed(b, d)) continue;      // pass 0: also must be unclaimed
-      tried++;
-      if(deerPathTo(d, b.x, b.y)){ d.targetBush=b; d.state='seek'; return true; }
+      tried++; budget--;
+      if(deerPathTo(d, b.x, b.y)){ d.seekCD=null; d.targetBush=b; d.state='seek'; return true; }
     }
+    if(budget<=0) break;
   }
+  d.seekCD=animT+2+Math.random()*2;                    // nothing reachable right now — try again in a couple of seconds
   return false;
 }
 function deerSeekMother(d){                              // fawns feed from mom, not bushes
@@ -3399,14 +3403,17 @@ function regroupStep(d, dt, bk){                                        // run t
 }
 function fleeStep(d, dt, speed){
   if(!d.path.length){                                   // pick a cell directly away from the nearest player
+    if(d._fpCD!=null && animT<d._fpCD){ moveAlong(d,dt,speed); return; }   // cornered & pathless — brief pause, not an A* storm
     const Tf=nearestFoe(d.px,d.py);
     const ang=Math.atan2(d.py-Tf.py, d.px-Tf.px);
+    let ok=false;
     for(let r=7;r>=2;r--){
       const tx=Math.max(0,Math.min(GRID-1, Math.round(cellOf(d.px)+Math.cos(ang)*r)));
       const ty=Math.max(0,Math.min(GRID-1, Math.round(cellOf(d.py)+Math.sin(ang)*r)));
       const dest=nearestOpen(tx,ty);
-      if(dest && deerPathTo(d,dest.x,dest.y) && d.path.length) break;
+      if(dest && deerPathTo(d,dest.x,dest.y) && d.path.length){ ok=true; break; }
     }
+    if(!ok) d._fpCD=animT+0.5; else d._fpCD=null;
   }
   moveAlong(d,dt,speed);
 }
@@ -3580,7 +3587,7 @@ function updateDeer(d, dt){
     }
     else if(occupied(cellOf(d.px),cellOf(d.py),d) && deerStepOff(d)){ /* don't share a tile — step off */ }
     else if(d.leader && leaderDist(d) > d.followDist){ deerFollow(d); }   // don't laze while the leader leaves
-    else if(d.restT<=0){ if(!deerWander(d)) d.restT=1; }
+    else if(d.restT<=0){ if(!deerWander(d)) d.restT=2+Math.random()*2; }   // a failed ramble backs off — no per-second A* storms
   } else if(d.state==='seek'){
     if(d.fawn){                                                          // heading to mom to nurse
       if(!motherAlive(d)){ d.state='wander'; d.path=[]; return; }        // mother gone — can't nurse on a corpse or another deer
@@ -5805,7 +5812,7 @@ function menuLayout(){
   const px=(W-pw)/2, py=(H-ph)/2, pad=pw*0.028;
   const mtH=Math.max(34,32*DPR), cs=Math.max(26,26*DPR);
   const closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.6+(mtH-cs)/2, w:cs, h:cs };
-  const names={ equip:'Equipment', items:'Inventory', stats:'Stats', cards:'Mind', map:'Map' };
+  const names={ equip:'Equipment', items:'Inventory', stats:'Stats', cards:'Training', map:'Map' };
   const keys=['equip','items','stats','cards','map'];
   const tw=(closeBtn.x-pad*0.5-(px+pad))/keys.length;
   const tabs=keys.map((k,i)=>({ key:k, name:names[k], x:px+pad+i*tw, y:py+pad*0.6, w:tw-pad*0.22, h:mtH }));
@@ -5903,57 +5910,72 @@ function drawMiniCard(id, c, x, y, w, h){              // a tiny trading card: t
   ctx.restore();
 }
 let _cardRows=null;
-function drawCardsTab(M){                              // THE MIND — the brain grid + every card, one tab of the hero menu
+function drawCardsTab(M){                              // TRAINING — a BIG brain grid on the left, the card shelf on the right
   const owned=Object.keys(player.cards||{});
   owned.sort((a,b)=> (player.cards[b].trained?1:0)-(player.cards[a].trained?1:0) || player.cards[b].tier-player.cards[a].tier);
-  const pad=M.pad;
+  const pad=M.pad, hdr=Math.max(26,24*DPR);
   ctx.save();
-  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(15,14*DPR))+'px system-ui, sans-serif';
+  ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(16,15*DPR))+'px system-ui, sans-serif';
   ctx.textAlign='left'; ctx.textBaseline='middle';
-  ctx.fillText('The Mind', M.cx, M.cy+Math.max(9,8*DPR));
+  ctx.fillText('Training', M.cx, M.cy+Math.max(9,8*DPR));
   ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(12,11*DPR))+'px system-ui, sans-serif';
-  ctx.fillText(gridUsed()+' / '+gridSquares()+' squares trained · the grid grows +1 every 5 levels', M.cx+Math.max(96,90*DPR), M.cy+Math.max(10,9*DPR));
-  // --- the 5×5 grid, filled square by square with each trained card's colour ---
-  const gy=M.cy+Math.max(26,24*DPR), cell=Math.max(14,13*DPR), gap=Math.max(2,2*DPR);
-  const gx=M.cx, cols=5;
-  const fills=[]; for(const id of owned){ const c=player.cards[id]; if(!c.trained) continue;
-    for(let i=0;i<CARD_TIERS[c.tier].sq;i++) fills.push({col:CARD_TIERS[c.tier].col, dim:c.trainT>0}); }
-  for(let i=0;i<25;i++){ const r2=Math.floor(i/cols), col2=i%cols;
-    const x=gx+col2*(cell+gap), y=gy+r2*(cell+gap)*0.72;         // squash rows a little
-    const h2=cell*0.72;
-    if(i>=gridSquares()){ rect(x,y,cell,h2,'#241609');           // locked — the mind has yet to grow
-      ctx.strokeStyle='#3a2a18'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
+  ctx.fillText(gridUsed()+' / '+gridSquares()+' squares trained · +1 square every 5 levels', M.cx+Math.max(96,90*DPR), M.cy+Math.max(10,9*DPR));
+  // --- the 5×5 training grid, LARGE — every trained card visible as its own coloured block with its art ---
+  const legendH=Math.max(46,42*DPR);
+  const G=Math.min(M.cw*0.48, M.ch-hdr-legendH-pad*0.5);
+  const gap=Math.max(3,3*DPR), cell=(G-4*gap)/5, cols=5;
+  const gx=M.cx, gy=M.cy+hdr;
+  const fills=[], runs=[];                             // per-square colours, plus each card's run of squares for its art
+  for(const id of owned){ const c=player.cards[id]; if(!c.trained) continue;
+    const start=fills.length, n=CARD_TIERS[c.tier].sq;
+    for(let i=0;i<n;i++) fills.push({col:CARD_TIERS[c.tier].col, dim:c.trainT>0});
+    runs.push({id, start, n, dim:c.trainT>0}); }
+  const sqXY=(i)=>({ x:gx+(i%cols)*(cell+gap), y:gy+Math.floor(i/cols)*(cell+gap) });
+  for(let i=0;i<25;i++){ const p2=sqXY(i);
+    if(i>=gridSquares()){ rect(p2.x,p2.y,cell,cell,'#241609');           // locked — the mind has yet to grow
+      ctx.strokeStyle='#3a2a18'; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(p2.x,p2.y,cell,cell); }
     else if(i<fills.length){ ctx.save(); if(fills[i].dim) ctx.globalAlpha=0.45;
-      rect(x,y,cell,h2,fills[i].col); ctx.restore();
-      ctx.strokeStyle='#1d1207'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
-    else { rect(x,y,cell,h2,'#4a3a26');                          // open square — room to learn
-      ctx.strokeStyle='#5c4930'; ctx.lineWidth=1; ctx.strokeRect(x,y,cell,h2); }
+      rect(p2.x,p2.y,cell,cell,fills[i].col); ctx.restore();
+      ctx.strokeStyle='#1d1207'; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(p2.x,p2.y,cell,cell); }
+    else { rect(p2.x,p2.y,cell,cell,'#4a3a26');                          // open square — room to learn
+      ctx.strokeStyle='#5c4930'; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(p2.x,p2.y,cell,cell); }
   }
-  // legend beside the grid
+  for(const r3 of runs){                              // the card's art sits on its block, so you can SEE what's trained in
+    const mid=sqXY(r3.start+Math.floor(r3.n/2)), first=sqXY(r3.start);
+    ctx.save(); if(r3.dim) ctx.globalAlpha=0.5;
+    drawCardArt(r3.id, mid.x+cell/2, mid.y+cell*0.46, cell*0.52);
+    ctx.restore();
+    ctx.strokeStyle='rgba(255,240,210,0.55)'; ctx.lineWidth=Math.max(1.5,DPR*1.3);   // a light seam marks where each card's block begins
+    ctx.strokeRect(first.x+1, first.y+1, cell-2, cell-2);
+  }
+  // legend beneath the grid
   ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(11,10*DPR))+'px system-ui, sans-serif';
-  ctx.fillText('Rarer cards take FEWER squares and work a little harder.', gx+5*(cell+gap)+pad*0.6, gy+cell*0.5);
-  ctx.fillText('Training a card takes '+(TRAIN_SECS/60)+' min before it pays. Forgetting DESTROYS it.', gx+5*(cell+gap)+pad*0.6, gy+cell*1.35);
-  ctx.fillText('Starving switches every card off.', gx+5*(cell+gap)+pad*0.6, gy+cell*2.2);
-  // --- the card rows ---
-  const rows=[]; let y=gy+5*(cell+gap)*0.72+pad*0.7;
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  const ly=gy+G+pad*0.4, lf=Math.max(13,12*DPR);
+  ctx.fillText('Rarer cards take FEWER squares and work a little harder.', M.cx, ly);
+  ctx.fillText('Training takes '+(TRAIN_SECS/60)+' min to pay · Forgetting DESTROYS the card · Starving switches all cards off.', M.cx, ly+lf);
+  // --- the card shelf, to the right of the grid ---
+  const rx=M.cx+G+pad, rw=M.cw-G-pad;
+  const rows=[]; let y=M.cy+hdr*0.4;
   const roomH=M.cy+M.ch-y;
   const rowH=Math.max(32, Math.min(Math.max(56,50*DPR), roomH/Math.max(1,owned.length)));
   if(!owned.length){ ctx.fillStyle='#c9b391'; ctx.font=Math.round(Math.max(13,12*DPR))+'px system-ui, sans-serif';
-    ctx.fillText('No cards yet — they drop from goblins, bosses, and the Guild.', M.cx, y+rowH*0.6); }
+    ctx.fillText('No cards yet — they drop from goblins,', rx, y+rowH*0.4);
+    ctx.fillText('bosses, and the Guild.', rx, y+rowH*0.8); }
   for(const id of owned){
     const c=player.cards[id], T=CARD_TIERS[c.tier], def=CARDS[id];
     const ch2=rowH*0.92, cw2=ch2*0.74;
-    drawMiniCard(id, c, M.cx, y+rowH*0.5-ch2/2, cw2, ch2);                        // the little card itself
-    const tx=M.cx+cw2+Math.max(10,9*DPR);
+    drawMiniCard(id, c, rx, y+rowH*0.5-ch2/2, cw2, ch2);                          // the little card itself
+    const tx=rx+cw2+Math.max(10,9*DPR);
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle = c.trained&&c.trainT<=0 ? '#ffdf9e' : '#d8c6a6';
     ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
-    ctx.fillText(def.name+' · '+T.name, tx, y+rowH*0.34);
+    ctx.fillText(def.name+' · '+T.name, tx, y+rowH*0.3);
     ctx.fillStyle='#b3a084'; ctx.font=Math.round(Math.max(11,10.5*DPR))+'px system-ui, sans-serif';
     const status = !c.trained ? 'in Memory' : c.trainT>0 ? 'training… '+Math.ceil(c.trainT/60)+' min' : 'trained';
-    ctx.fillText(def.txt(def.base*T.eff)+' — '+status, tx, y+rowH*0.72);
+    ctx.fillText(def.txt(def.base*T.eff)+' — '+status, tx, y+rowH*0.68);
     const bw=Math.max(72,64*DPR), bh=Math.max(24,22*DPR);
-    const btn={ x:M.cx+M.cw-bw, y:y+rowH*0.5-bh/2, w:bw, h:bh };
+    const btn={ x:rx+rw-bw, y:y+rowH*0.5-bh/2, w:bw, h:bh };
     const canTrain = !c.trained && (gridUsed()+T.sq<=gridSquares());
     ctx.fillStyle = c.trained ? '#8a4a3a' : canTrain ? '#3f7d3f' : '#4a4038';
     ctx.beginPath(); ctx.roundRect(btn.x,btn.y,btn.w,btn.h,7); ctx.fill();
@@ -6051,7 +6073,7 @@ function drawStatsTab(M){                              // the hero, in numbers
   label(y, 'Attack rhythm', 'cooldown \u00d7'+coolMul().toFixed(2)); y+=lh;
   label(y, 'Aim', Math.round(missChance()*100)+'% miss'); y+=lh;
   label(y, 'Regeneration', '\u00d7'+regenMul().toFixed(2)+' (fed only)'); y+=lh;
-  label(y, 'Mind', gridUsed()+' / '+gridSquares()+' squares trained'); y+=lh;
+  label(y, 'Training', gridUsed()+' / '+gridSquares()+' squares trained'); y+=lh;
   // race arrows, right column \u2014 the tuner-fixed table (\u00a713)
   const ax=M.cx+M.cw*0.56; let ay=M.cy+lh*0.6;
   ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(13,12.5*DPR))+'px system-ui, sans-serif';
