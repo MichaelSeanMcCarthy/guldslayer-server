@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · m';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · n';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -904,7 +904,7 @@ function tileWalkable(tx,ty,cr){
   for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(isBlocked(x0+dx,y0+dy)) return false;
   return true;
 }
-function findPathTiles(scx,scy,tcx,tcy,cr){
+function findPathTiles(scx,scy,tcx,tcy,cr,maxExpand){
   const N=TGRD*TGRD;
   if(!_tpG){ _tpG=new Float32Array(N); _tpPrev=new Int32Array(N); _tpMark=new Int32Array(N); }
   const stx=Math.max(0,Math.min(TGRD-1,Math.floor(scx/TILE))), sty=Math.max(0,Math.min(TGRD-1,Math.floor(scy/TILE)));
@@ -938,7 +938,8 @@ function findPathTiles(scx,scy,tcx,tcy,cr){
     return top; };
   G[S]=0; PREV[S]=-1; MK[S]=gen; hPush(S, Math.hypot(ttx-stx,tty-sty));
   let found=false, guard=0;
-  while(hIdx.length && guard++<60000){
+  const cap=maxExpand||60000;                              // AI callers pass a small cap — a doomed flood must bail out early
+  while(hIdx.length && guard++<cap){
     const cur=hPop();
     if(cur===T){ found=true; break; }
     const cx2=cur%TGRD, cy2=(cur/TGRD)|0;
@@ -958,8 +959,8 @@ function findPathTiles(scx,scy,tcx,tcy,cr){
   path.reverse(); return path;
 }
 /* --- A* pathfinding (8-dir, no corner cutting). size=2 needs a clear 2x2 footprint --- */
-function findPath(sx,sy,tx,ty,size,cr){                       // cr=true: a creature is walking — gates bar its way
-  if(mapMode==='forest') return findPathTiles(sx,sy,tx,ty,cr);   // the surface world walks the 3m tile grid
+function findPath(sx,sy,tx,ty,size,cr,maxExpand){             // cr=true: a creature is walking — gates bar its way
+  if(mapMode==='forest') return findPathTiles(sx,sy,tx,ty,cr,maxExpand);   // the surface world walks the 3m tile grid
   size=size||1;
   const blk=(x,y)=>{ if(cr && gateAtCell(x,y)) return true;
     if(size<2) return isBlocked(x,y);
@@ -984,7 +985,8 @@ function findPath(sx,sy,tx,ty,size,cr){                       // cr=true: a crea
   const sk=sy*GRID+sx, tk=ty*GRID+tx;
   G[sk]=0; MARK[sk]=gen; PREV[sk]=-1; hpush(sk, H(sx,sy));
   const dirs=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[-1,-1,Math.SQRT2]];
-  while(heap.length){
+  let pfGuard=0; const pfCap=maxExpand||1e9;             // same early-bail cap for the dungeon's cell-grade search
+  while(heap.length && pfGuard++<pfCap){
     const ck=hpop();
     if(MARK[ck]===-gen) continue;
     if(ck===tk){ const path=[]; let k=ck; while(k!==sk){ path.unshift({x:k%GRID, y:(k/GRID)|0}); k=PREV[k]; } return path; }
@@ -3258,8 +3260,12 @@ function separate(e, dt){                                 // creatures prefer no
   if(e.x!=null){ e.x=cellOf(e.px); e.y=cellOf(e.py); }     // keep goblins' cell coords in sync
 }
 
-function deerPathTo(d, cx, cy){
-  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, true);   // 2x2 creatures need a clear footprint
+let _aiPathBudget=0, _aiPathFrame=-1;                 // ALL deer share one per-frame pathfinding allowance —
+function deerPathTo(d, cx, cy){                       // a starving herd can never again pin the server's CPU
+  if(_aiPathFrame!==animT){ _aiPathFrame=animT; _aiPathBudget=6; }    // a fresh frame refills the allowance
+  if(_aiPathBudget<=0) return false;                  // spent — this deer simply waits a frame
+  _aiPathBudget--;
+  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, true, 2000);   // capped flood: a doomed search bails early
   if(!cells) return false;
   d.path=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL}));
   return true;
@@ -3338,7 +3344,7 @@ function deerSeek(d){
     }
     if(budget<=0) break;
   }
-  d.seekCD=animT+2+Math.random()*2;                    // nothing reachable right now — try again in a couple of seconds
+  d.seekCD=animT+5+Math.random()*5;                    // nothing reachable right now — back off for a good while
   return false;
 }
 function deerSeekMother(d){                              // fawns feed from mom, not bushes
@@ -3354,7 +3360,7 @@ function deerDecide(d, hungry){
     if(d.fawn){ if(motherAlive(d)){ if(leaderDist(d)<=1.6){ startNurse(d); return; } if(deerSeekMother(d)) return; } }
     else { if(deerSeek(d)) return;                 // head for a bush
            if(deerWander(d)) return;               // none reachable right now — roam & retry, don't laze or follow
-           d.state='rest'; d.restT=0.4; return; }  // stuck: short rest, then re-seek next tick
+           d.state='rest'; d.restT=1.2+Math.random()*0.8; return; }  // stuck: rest a beat, then re-seek
   }
   if(d.leader && leaderDist(d) > d.followDist){ if(deerFollow(d)) return; }
   // calm, deer-like: mostly stand and graze, only rarely take a (longer) stroll
