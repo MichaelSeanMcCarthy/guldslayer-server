@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · c';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · d';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -6454,7 +6454,7 @@ function loop(ts){
     worldTime+=dt;                                  // the sun keeps moving between server snapshots
     if(foodCD>0) foodCD=Math.max(0, foodCD-dt);
     updateCamFollow(dt);
-    netUpdate(dt); draw(); requestAnimationFrame(loop); return;
+    netUpdate(dt); netSmooth(dt); draw(); requestAnimationFrame(loop); return;
   }
   updateHunger(dt);                              // the hunger clock, regen and digestion (§4d)
   updateCards(dt);                               // training-in countdowns
@@ -7122,15 +7122,15 @@ function buildSnap(){
 function netApplySnap(m){                              // world portion of a snapshot (guest, matching map only)
   if(m.deer){                                          // nid-keyed upsert; only a FULL list may prune the rest
   const seenD=new Set();
-  for(const s of m.deer){ seenD.add(s.i); let d=allDeer.find(o=>o.nid===s.i); if(!d){ d={path:[], nid:s.i}; allDeer.push(d); }
-    d.px=s.x; d.py=s.y; d.face=s.f; d.faceLeft=!!s.l; d.state=s.s; d.dead=!!s.d; d.deadT=s.t; d.gone=false;
+  for(const s of m.deer){ seenD.add(s.i); let d=allDeer.find(o=>o.nid===s.i); if(!d){ d={path:[], nid:s.i, px:s.x, py:s.y}; allDeer.push(d); }
+    d.nx=s.x; d.ny=s.y; d.face=s.f; d.faceLeft=!!s.l; d.state=s.s; d.dead=!!s.d; d.deadT=s.t; d.gone=false;   // px/py glide toward nx/ny (netSmooth)
     d.fawn=!!s.fw; d.antlers=!!s.an; d.pregnant=!!s.pr; d.scale=s.sc; d.hp=s.h; d.nid=s.i;
     d.color=d.fawn?C_FAWN:d.antlers?C_BUCK:C_DOE; }
   if(m.deerFull){ for(let i=allDeer.length-1;i>=0;i--){ if(!seenD.has(allDeer[i].nid)) allDeer.splice(i,1); } }
   }
   const seen=new Set();
-  for(const s of m.gob){ seen.add(s.i); let g=goblins.find(o=>o.nid===s.i); if(!g){ g={nid:s.i}; goblins.push(g); }
-    g.kind=s.k; g.px=s.x; g.py=s.y; g.x=s.bx; g.y=s.by; g.face=s.f; g.faceLeft=!!s.l; g.dead=!!s.d; g.deadT=s.t; g.gone=false;
+  for(const s of m.gob){ seen.add(s.i); let g=goblins.find(o=>o.nid===s.i); if(!g){ g={nid:s.i, px:s.x, py:s.y}; goblins.push(g); }
+    g.kind=s.k; g.nx=s.x; g.ny=s.y; g.x=s.bx; g.y=s.by; g.face=s.f; g.faceLeft=!!s.l; g.dead=!!s.d; g.deadT=s.t; g.gone=false;   // px/py glide toward nx/ny (netSmooth)
     g.hp=s.h; g.looted=!!s.lo; g.st=s.st; g.swingT=s.sw; g.punchT=s.pu; g.castT=s.ca; g.hopAmt=s.ho; if(g.kind==='bigskel') g.big=true;
     g.srcKind=s.sk||null; g.antlers=!!s.sa; g.fawn=!!s.sf; }
   if(m.gobFull){ for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); } }
@@ -7211,7 +7211,15 @@ function netOnData(m, fromClient){
   else if(m.t==='snap'){ if(net.mode==='guest'){
     if(m.wt!=null) worldTime=m.wt;                    // one sun for the whole party
     if(m.rw!=null) weather.raining=!!m.rw;            // …and one storm: the host's weather is everyone's weather
-    if(m.players) net.remotes=m.players.filter(p2=>p2.id!==net.myId);
+    if(m.players){                                   // upsert (not replace) so each fellow player keeps a smoothed screen position
+      const prev=net.remotes||[], next=[];
+      for(const np of m.players){ if(np.id===net.myId) continue;
+        const o=prev.find(x=>x.id===np.id);
+        if(!o){ np.nx=np.px; np.ny=np.py; next.push(np); continue; }   // a new face appears right where the host says
+        const sx=o.px, sy=o.py; Object.assign(o, np);
+        o.nx=np.px; o.ny=np.py; o.px=sx; o.py=sy;                      // keep gliding from where we drew them last
+        next.push(o); }
+      net.remotes=next; }
     if((m.map||'forest')===mapMode) netApplySnap(m); } }
   else if(m.t==='me'){ if(net.mode==='host' && fromClient){ const P=fromClient.p;
     P.active=true; P.map=m.map||'forest'; P.px=m.px; P.py=m.py; P.race=m.race; P.face=m.face; P.tool=m.tool; P.punchT=m.punchT;
@@ -7258,6 +7266,17 @@ function netOnData(m, fromClient){
     else if(m.op==='harv'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
       let n=0; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(x0+dx,y0+dy)); if(c && c.stage==='wheat'){ c.stage='till'; c.t=0; n++; } }
       if(n) spawnHarvestFX((x0+TILE/2)*CELL,(y0+TILE/2)*CELL); } } }
+}
+function netSmooth(dt){                                // guests LERP everyone between the 20Hz snapshots — no more stutter
+  if(net.mode!=='guest') return;
+  const k=Math.min(1, dt*16), JUMP=CELL*8;             // ~90% of the way in ~140ms; a real teleport just snaps
+  const ease=(e)=>{ if(e.nx==null || e.px==null) return;
+    const dx=e.nx-e.px, dy=e.ny-e.py;
+    if(Math.abs(dx)+Math.abs(dy)>JUMP){ e.px=e.nx; e.py=e.ny; }
+    else { e.px+=dx*k; e.py+=dy*k; } };
+  for(const d of allDeer) ease(d);
+  for(const g of goblins) ease(g);
+  for(const p of (net.remotes||[])) ease(p);
 }
 function netUpdate(dt){
   if(net.mode==='guest' && net.connected && net.serverUrl && net._lastMsgT && Date.now()-net._lastMsgT>9000){
