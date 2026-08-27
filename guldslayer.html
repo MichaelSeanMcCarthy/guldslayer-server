@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · b';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · c';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -220,9 +220,9 @@ const C_FAWN  = '#bf9e5e';   // fawn  (tan)
 const SPAWN = { x: Math.floor(GRID/2), y: Math.floor(GRID/2) };  // centre cell
 
 /* --- deer behaviour tuning --- */
-const BUCK_SPEED = CELL * 0.84; // world units / second (calm; 20% slower world pace)
-const RUN_SPEED  = CELL * 1.68; // 2x calm speed — a running bolt from the player (20% slower world pace)
-const CHARGE_SPEED = CELL * 2.56; // an aggressive buck charging the player (20% slower world pace)
+const BUCK_SPEED = CELL * 1.05; // world units / second (calm graze — creature pace restored +25%)
+const RUN_SPEED  = CELL * 2.1;  // 2x calm speed — a running bolt from the player
+const CHARGE_SPEED = CELL * 3.2; // an aggressive buck charging the player
 const BUCK_ATTACK_CD = 4;       // seconds between buck attacks
 const BUCK_DAMAGE = 6;          // HP points per hit
 const BOSS_HP = 200;            // the goblin boss is a fortress of meat
@@ -230,8 +230,8 @@ const BOULDER_CD = 3;           // seconds between boss boulder throws
 const BOULDER_DMG = 5;          // explosion damage to every player within the blast
 const BOULDER_RADIUS_T = 3;     // blast radius in tiles
 const DMG_FLASH = 1.0;          // seconds the lost-HP white chunks linger
-const TURTLE_SPEED = CELL * 0.88;  // turtles paddle home slowly (20% slower world pace)
-const TURTLE_RUN   = CELL * 2.08;  // turtles bolt for deep water when scared (20% slower world pace)
+const TURTLE_SPEED = CELL * 1.1;   // turtles paddle home slowly (creature pace restored +25%)
+const TURTLE_RUN   = CELL * 2.6;   // turtles bolt for deep water when scared
 const TURTLE_FLEE_R = 3;           // player within this many tiles -> dive
 const TURTLE_SAFE_R = 5;           // player this far from the dive spot -> resurface
 const TURTLE_HIDE_MIN = 10;        // seconds a turtle stays underwater no matter what
@@ -1171,7 +1171,7 @@ function spawnRoamers(){
   for(let i=0;i<21;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // followers
   const wc=westOpen(); goblins.push(makeWitch(wc.x, wc.y));                                                                 // the goblin witch
 }
-const GOB_SPEED = CELL*1.2;          // archer walking speed (20% slower world pace)
+const GOB_SPEED = CELL*1.5;          // archer walking speed (creature pace restored +25%)
 const WITCH_SPEED = MOVE_SPEED;      // the witch glides as fast as a human hero
 const GOB_CHOP_TIME = 4;             // seconds a goblin spends felling a tree for arrows
 function goblinDance(g, dt){          // idle camp behaviour: sway & occasionally leap
@@ -3054,7 +3054,7 @@ function onTapWorld(wx,wy){
     if(cr){ startAttack(cr, player.tool==='bow'||player.tool==='longbow'); return; }   // hunt the tapped creature
   } else if(!player.tool){
     const cr=creatureAt(wx,wy);
-    if(cr && cr.kind==='goblin'){ startAttack(cr, false, true); return; }   // bare-handed → walk up and punch the goblin
+    if(cr){ startAttack(cr, false, true); return; }   // no weapon in hand → walk up and PUNCH it (goblin, deer — anything)
   }
   const bg2=bagAt(cx,cy);
   if(bg2){ bagUI.open=true; bagUI.id=bg2.id; bagUI.msg=''; bagUI.msgT=0; pathToCell(bg2.x, Math.min(GRID-1,bg2.y+1)); return; }   // tapped a dropped bag — walk over, panel opens
@@ -3447,8 +3447,8 @@ function updateDeer(d, dt){
     if(d.state==='flee'||d.state==='alert'){ d.state='wander'; d.path=[]; }
   } else {                                                            // does & fawns are shy
     if(pd < 3){ d.state='flee'; fleeStep(d, dt, RUN_SPEED); return; } // too close — always bolt
+    if(pd < 8){ d.state='flee'; fleeStep(d, dt, RUN_SPEED); return; }   // fear beats hunger — a hungry doe still bolts
     if(!hungry){
-      if(pd < 8){ d.state='flee'; fleeStep(d, dt, RUN_SPEED); return; }
       if(pd < 12){                                                   // stop & watch for 3s, then edge away
         if(d.state!=='alert'){ d.state='alert'; d.alertT=3; d.path=[]; }
         d.faceLeft = player.px < d.px; d.face = face8(player.px-d.px, player.py-d.py);
