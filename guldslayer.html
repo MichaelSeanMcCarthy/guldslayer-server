@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · f';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · g';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3097,7 +3097,7 @@ const does2 = []; for(let i=0;i<45;i++) does2.push(makeDeer(buck2,false,C_DOE,0.
 const mother2 = does2[0];
 const fawns2 = []; for(let i=0;i<24;i++){ const f=makeDeer(does2[i%does2.length],false,C_FAWN,0.54); f.fawn=true; f.followDist=FAWN_FOLLOW; f.hp=1; fawns2.push(f); }
 const herd2 = [buck2, ...does2, ...fawns2];    // 24 animals (~4x of the first herd's 6)
-// a THIRD herd roams the WEST bank — the shops' side of the creek, so hunters find deer near home
+// a THIRD herd — east of the creek like the rest, staked out well away from the other two, so a hunter is never far from deer
 const buck3 = makeDeer(null, true, C_BUCK, 0.945);
 const does3 = []; for(let i=0;i<12;i++) does3.push(makeDeer(buck3,false,C_DOE,0.81));
 const fawns3 = []; for(let i=0;i<6;i++){ const f=makeDeer(does3[i%does3.length],false,C_FAWN,0.54); f.fawn=true; f.followDist=FAWN_FOLLOW; f.hp=1; fawns3.push(f); }
@@ -3513,17 +3513,18 @@ function spawnHerd2(){
     const c=nearOpen(cellOf(m.px),cellOf(m.py),2); f.px=(c.x+0.5)*CELL; f.py=(c.y+0.5)*CELL; deerWander(f); }
 }
 function spawnHerd3(){
-  // the WEST-bank herd — the shops' side of the creek, where hunters actually roam
-  const maxX = Math.max(6, Math.min(GRID-4, (world.creekMinX!=null?world.creekMinX:GRID)-4));
+  // a third herd — EAST of the creek like the others (that's the players' side), but well clear of both existing herds
+  const minX = Math.max(2, Math.min(GRID-6, (world.creekMaxX!=null?world.creekMaxX:0) + 4));
   const reset=(d)=>{ d.path=[]; d.state='wander'; d.eatT=0; d.restT=0; d.targetBush=null; d.faceLeft=false; d.dead=false; d.gone=false; d.deadT=0; d.starveT=STARVE_TIME; d.hunger=0; d.hp = d.fawn?1 : d.antlers?10 : 6; };
   const nearOpen=(bx,by,rad)=>{ for(let i=0;i<200;i++){ const r=1+((Math.random()*rad)|0), a=Math.random()*Math.PI*2;
-    const x=Math.max(1,Math.min(maxX, bx+Math.round(Math.cos(a)*r)));
+    const x=Math.max(minX,Math.min(GRID-1, bx+Math.round(Math.cos(a)*r)));
     const y=Math.max(0,Math.min(GRID-1, by+Math.round(Math.sin(a)*r)));
     if(spawnableCell(x,y)) return {x,y}; } return {x:bx,y:by}; };
   let bc=null;
-  for(let i=0;i<600 && !bc;i++){ const x=1+((Math.random()*maxX)|0), y=(Math.random()*GRID)|0;
-    if(spawnableCell(x,y)) bc={x,y}; }
-  if(!bc) bc=randOpenCell();
+  for(let i=0;i<600 && !bc;i++){ const x=minX+((Math.random()*(GRID-minX))|0), y=(Math.random()*GRID)|0;
+    if(spawnableCell(x,y) && Math.hypot(x-cellOf(buck.px), y-cellOf(buck.py))>18
+                          && Math.hypot(x-cellOf(buck2.px), y-cellOf(buck2.py))>18) bc={x,y}; }
+  if(!bc) bc={ x:Math.min(GRID-2,minX+8), y:(GRID*0.75)|0 };
   reset(buck3); buck3.hunger=0; buck3.px=(bc.x+0.5)*CELL; buck3.py=(bc.y+0.5)*CELL; deerWander(buck3);
   for(const d of does3){ reset(d); d.hunger=Math.random()*30; const c=nearOpen(bc.x,bc.y,12); d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; deerWander(d); }
   for(const f of fawns3){ reset(f); f.hunger=Math.random()*40; const m=f.leader||buck3;
