@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · i';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · j';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3016,12 +3016,14 @@ function drawBirds(){                               // silhouettes overhead, sof
     ctx.beginPath(); ctx.ellipse(g.x, g.y, Math.max(2, CELL*cam.scale*0.18), Math.max(1, CELL*cam.scale*0.075), 0, 0, Math.PI*2); ctx.fill();
     const s=worldToScreen(b.x, b.y-alt);            // the bird itself, up in the air
     const u=Math.max(5, CELL*cam.scale*0.36), wy=Math.sin(b.ph)*u*0.3;
-    ctx.strokeStyle='#2c2620'; ctx.lineWidth=Math.max(1.5, u*0.14); ctx.lineCap='round';
-    ctx.beginPath();
-    ctx.moveTo(s.x-u*0.55, s.y-wy);
-    ctx.quadraticCurveTo(s.x-u*0.18, s.y+u*0.1, s.x, s.y);
-    ctx.quadraticCurveTo(s.x+u*0.18, s.y+u*0.1, s.x+u*0.55, s.y-wy);
-    ctx.stroke();
+    ctx.lineCap='round';
+    const wings=()=>{ ctx.beginPath();
+      ctx.moveTo(s.x-u*0.55, s.y-wy);
+      ctx.quadraticCurveTo(s.x-u*0.18, s.y+u*0.1, s.x, s.y);
+      ctx.quadraticCurveTo(s.x+u*0.18, s.y+u*0.1, s.x+u*0.55, s.y-wy);
+      ctx.stroke(); };
+    ctx.strokeStyle='rgba(60,60,48,0.45)'; ctx.lineWidth=Math.max(2.5, u*0.22); wings();   // a soft dark edge so white reads on any sky
+    ctx.strokeStyle='#f6f3ea'; ctx.lineWidth=Math.max(1.5, u*0.13); wings();               // WHITE birds — gulls, not bats
   }
   ctx.restore();
 }
