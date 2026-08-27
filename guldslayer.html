@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · g';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · h';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -4850,6 +4850,16 @@ function draw(){
     drawFireflies(dark);    // and the fireflies come out along the banks
     drawWeather();          // rain, gloom and lightning over the meadow
   }
+  if(typeof net!=='undefined' && net._verMismatch){                     // the server moved on — this tab is stale
+    ctx.save(); const bw=Math.min(canvas.width*0.9, Math.max(360, 340*DPR)), bh=Math.max(30,28*DPR);
+    const bx=(canvas.width-bw)/2, by=Math.max(8, 8*DPR);
+    ctx.globalAlpha=0.92; ctx.fillStyle='#2e1d10'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,bh/2); ctx.fill();
+    ctx.globalAlpha=1; ctx.strokeStyle='#ffd44d'; ctx.lineWidth=Math.max(1.5,DPR*1.3); ctx.stroke();
+    ctx.fillStyle='#ffdf9e'; ctx.font='bold '+Math.round(Math.max(12,12*DPR))+'px system-ui, sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('A new build is live — refresh the page to update!', bx+bw/2, by+bh*0.54);
+    ctx.restore();
+  }
   drawFloats();             // floating text (e.g. "+1 stamina")
   drawHurtFlash();          // red screen-edge flash when hurt
   drawChopTimer();          // countdown above a tree being chopped
@@ -7098,6 +7108,9 @@ function buildSnap(){
     sn.fn=(world.fences||[]).map(f=>[f.tx,f.ty,f.hp]);
     sn.gt=(world.gates||[]).map(g2=>[g2.tx,g2.ty]);
     sn.bd=(world.bldgs||[]).map(b=>[b.kind, b.x, b.y]);   // every built shop/stall, any number of each kind
+    sn.v=BUILD;                                           // the host's build stamp — old clients get told to refresh
+    { const first=(k)=>{ const b=(world.bldgs||[]).find(b2=>b2.kind===k); return b?[b.x,b.y]:0; };   // legacy shim: pre-multi clients still see one of each
+      sn.bld=[first('shop'), first('stall'), first('butcher'), first('armor')]; }
     const bush=[]; for(const b of world.bushes) bush.push(b.grow==null?[b.x,b.y]:[b.x,b.y,+(+b.grow).toFixed(2)]);
     const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?(c.w?3:1):2]);   // crops so the guest sees wheat ripen (3 = watered seed)
     sn.bush=bush; sn.crops=crops;
@@ -7159,6 +7172,7 @@ function netApplySnap(m){                              // world portion of a sna
       for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) world.terrain[gi(s[0]+dx,s[1]+dy)]=0;
       world.stumps.push({x:s[0], y:s[1], regrow:s[2]}); }
     else { const st=(world.stumps||[]).find(x2=>x2.x===s[0]&&x2.y===s[1]); if(st) st.regrow=s[2]; } } }   // keep regrow clocks in step
+  if(m.v && m.v!==BUILD) net._verMismatch=true;                          // the host runs a different build — nudge the player to refresh
   if(m.bd){ for(const [k,x,y] of m.bd){                                  // buildings only ever appear — add any we don't know yet
     if((world.bldgs||[]).some(b=>b.kind===k&&b.x===x&&b.y===y)) continue;
     if(k==='shop') placeShopAt(x,y);
