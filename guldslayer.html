@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · j';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · k';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1663,6 +1663,13 @@ function openBldg(b){
 function updatePlayer(dt){
   if(!player.path.length){
     player.targetCell=null;
+    if(player._waterPlot){ const t=player._waterPlot; player._waterPlot=null;   // arrived beside the thirsty plot → pour
+      const c=world.crops.get(gi(t.bx, t.by));
+      if(c && c.stage==='seed' && !c.w && (player.water||0)>0 &&
+         Math.hypot(player.px-(t.bx+1.5)*CELL, player.py-(t.by+1.5)*CELL)<=CELL*4.6) waterPlot(t.bx, t.by); }
+    if(player._fillWell){ const w=player._fillWell; player._fillWell=null;      // arrived at the well → draw water
+      if((world.wells||[]).includes(w) &&
+         Math.hypot(player.px-(w.tx*TILE+1.5)*CELL, player.py-(w.ty*TILE+1.5)*CELL)<=CELL*4.6) fillBucket(w); }
     if(player.goShop){                                            // arrived at the door → open THAT building
       const b=player._goB;
       if(b && (world.bldgs||[]).includes(b)){ const d=bldgDoorCell(b);
@@ -2405,25 +2412,33 @@ function plantSeeds(cx,cy){                        // sow wheat: ONE seed plants
 function updateCrops(dt){                          // sown seeds sprout into wheat after 10s — but ONLY once watered
   for(const c of world.crops.values()){ if(c.stage==='seed' && c.w){ c.t+=dt; if(c.t>=10){ c.stage='wheat'; c.w=false; } } }
 }
-function useBucket(cx,cy){                         // the bucket: fill it at a well, pour it on a sown plot
+function fillBucket(wl){                           // draw water from a well the hero is standing beside
+  if(player.water>=5){ addFloat('The bucket is already full.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+  player.water=5; addFloat('Bucket filled! 5 water', player.px, player.py-CELL*1.9, '#7ec8d8');
+  for(let i=0;i<8;i++) addParticle({kind:'bit', x:(wl.tx*TILE+1.5)*CELL+(Math.random()-0.5)*CELL, y:(wl.ty*TILE+1.2)*CELL,
+    vx:(Math.random()-0.5)*80, vy:-60-Math.random()*80, g:260, life:0.5, max:0.5, size:CELL*0.06, color:'#7ec8d8'});
+}
+function useBucket(cx,cy){                         // the bucket: fill it at a well, pour it on a sown plot — walking over first if need be
+  player._fillWell=null; player._waterPlot=null;
   const tx=Math.floor(cx/TILE), ty=Math.floor(cy/TILE);
   const wl=(world.wells||[]).find(w=>w.tx===tx&&w.ty===ty);
-  if(wl){                                          // tapped a well → draw water
-    if(Math.hypot(player.px-(wl.tx*TILE+1.5)*CELL, player.py-(wl.ty*TILE+1.5)*CELL)>CELL*4.5){
-      addFloat('Walk closer to the well.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+  if(wl){                                          // tapped a well → draw water (walk over if it's far)
     if(player.water>=5){ addFloat('The bucket is already full.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
-    player.water=5; addFloat('Bucket filled! 5 water', player.px, player.py-CELL*1.9, '#7ec8d8');
-    for(let i=0;i<8;i++) addParticle({kind:'bit', x:(wl.tx*TILE+1.5)*CELL+(Math.random()-0.5)*CELL, y:(wl.ty*TILE+1.2)*CELL,
-      vx:(Math.random()-0.5)*80, vy:-60-Math.random()*80, g:260, life:0.5, max:0.5, size:CELL*0.06, color:'#7ec8d8'});
+    if(Math.hypot(player.px-(wl.tx*TILE+1.5)*CELL, player.py-(wl.ty*TILE+1.5)*CELL)>CELL*4.5){
+      const dest=nearestOpen(wl.tx*TILE+1, wl.ty*TILE+3);          // the tile-step south of the well
+      if(dest){ player._fillWell=wl; pathToCell(dest.x, dest.y); }
+      return; }
+    fillBucket(wl);
     return;
   }
-  const bx=cx-(cx%TILE), by=cy-(cy%TILE);          // tapped a plot → water the sown seeds
+  const bx=cx-(cx%TILE), by=cy-(cy%TILE);          // tapped a plot → water the sown seeds (walk over if it's far)
   const c0=world.crops.get(gi(bx,by));
   if(c0 && c0.stage==='seed'){
     if(c0.w){ addFloat('Already watered.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
     if((player.water||0)<=0){ addFloat('The bucket is empty — fill it at a well.', player.px, player.py-CELL*1.9, '#e08a8a'); return; }
     if(Math.hypot(player.px-(bx+1.5)*CELL, player.py-(by+1.5)*CELL)>CELL*4.5){
-      addFloat('Walk closer.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+      player._waterPlot={bx, by}; pathToCell(bx+1, by+1);          // stride onto the plot, watering can in hand
+      return; }
     waterPlot(bx, by);
     return;
   }
@@ -3095,6 +3110,7 @@ function onTapWorld(wx,wy){
   { const bTap=bldgAtCell(cx,cy); if(bTap){ approachBldg(bTap); return; } }   // tapped a shop/stall → head to ITS door
   player.chopTree=null; player.chopping=false;
   player.goShop=false; player.goButcher=false; player.goAltar=false; player.goCave=false; player.attack=null; player.propTarget=null; player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null;
+  player._waterPlot=null; player._fillWell=null;
   moveTo(wx,wy);
 }
 
