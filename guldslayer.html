@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · a';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · b';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -343,6 +343,8 @@ const isArmorCell = (x,y)=> armorShop.placed && x>=armorShop.x && x<armorShop.x+
 const armorDoorCell = ()=> ({ x:armorShop.doorX, y:armorShop.y+armorShop.h });
 const isBlocked = (x,y)=> { if(!inGrid(x,y)) return true;
   if(world.bridgeSet && world.bridgeSet.has(gi(x,y))) return false;           // the bridge is always walkable
+  if(world.fenceBlock && world.fenceBlock.has(gi(x,y))) return true;          // a stout fence stops everyone (gates are handled per walker)
+  if(world.wellBlock && world.wellBlock.has(gi(x,y))) return true;            // the well is solid stone
   if(isShopCell(x,y)||isStallCell(x,y)||isButcherCell(x,y)||isArmorCell(x,y)) return true;
   if(world.shopBlock&&world.shopBlock.has(gi(x,y))) return true;
   if(world.hengeBlock&&world.hengeBlock.has(gi(x,y))) return true;   // standing stones & the altar
@@ -479,6 +481,7 @@ function generateWorld(){
   world.crops=new Map();
   // the crafting shops are BUILT by players now — the meadow starts empty
   world.sites=[]; world.shopDirt=[]; world.shopProps=[]; world.shopBlock=new Set(); world._dirtTiles=new Set();
+  world.wells=[]; world.fences=[]; world.gates=[]; world.fenceBlock=new Set(); world.gateBlock=new Set(); world.wellBlock=new Set();
   shop.placed=false; stall.placed=false; butcher.placed=false; armorShop.placed=false;
   world.builtBridges=[];
   world.bridge=[]; world.bridgeSet=new Set();       // no bridge is given — players BUILD their crossings now
@@ -628,6 +631,7 @@ function generateDungeon(){
   world.terrain=new Uint8Array(GRID*GRID).fill(1);        // solid rock everywhere…
   world.moist=new Uint8Array(GRID*GRID);
   world.trees=[]; world.bushes=[]; world.cattails=[]; world.water=[]; world.moistCells=[]; world.moistRing=[]; world.sites=[];
+  world.wells=[]; world.fences=[]; world.gates=[]; world.fenceBlock=new Set(); world.gateBlock=new Set(); world.wellBlock=new Set();
   world.stumps=[]; world.bushRespawn=[]; world.campDirt=[]; world.shopDirt=[]; world.pathDirt=[];
   world.shopProps=[]; world.shopBlock=new Set(); world.crops=new Map(); world.bridge=[]; world.bridgeSet=new Set();
   world.caveBlock=new Set(); world.hengeBlock=new Set(); world.caveFloor=[]; world.caveRocks=[];
@@ -895,22 +899,24 @@ function placeShopAt(sx, sy){
        tile-centre (the dungeon's hand-carved corridors keep the fine cell grid). --- */
 const TGRD = GRID/TILE;
 let _tpG=null,_tpPrev=null,_tpMark=null,_tpGen=0;
-function tileWalkable(tx,ty){
+const gateAtCell=(x,y)=> !!(world.gateBlock && world.gateBlock.has(gi(x,y)));   // a gate: open ground for players, a wall for creatures
+function tileWalkable(tx,ty,cr){
   if(tx<0||ty<0||tx>=TGRD||ty>=TGRD) return false;
+  if(cr && gateAtCell(tx*TILE+1, ty*TILE+1)) return false;   // creatures never pass a gate
   const x0=tx*TILE, y0=ty*TILE;
   for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(isBlocked(x0+dx,y0+dy)) return false;
   return true;
 }
-function findPathTiles(scx,scy,tcx,tcy){
+function findPathTiles(scx,scy,tcx,tcy,cr){
   const N=TGRD*TGRD;
   if(!_tpG){ _tpG=new Float32Array(N); _tpPrev=new Int32Array(N); _tpMark=new Int32Array(N); }
   const stx=Math.max(0,Math.min(TGRD-1,Math.floor(scx/TILE))), sty=Math.max(0,Math.min(TGRD-1,Math.floor(scy/TILE)));
   let ttx=Math.max(0,Math.min(TGRD-1,Math.floor(tcx/TILE))), tty=Math.max(0,Math.min(TGRD-1,Math.floor(tcy/TILE)));
-  if(!tileWalkable(ttx,tty)){                              // aim for the nearest walkable tile instead
+  if(!tileWalkable(ttx,tty,cr)){                           // aim for the nearest walkable tile instead
     let best=null, bd=1e9;
     for(let r=1;r<=3 && !best;r++){ for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
       if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
-      const nx=ttx+dx, ny=tty+dy; if(!tileWalkable(nx,ny)) continue;
+      const nx=ttx+dx, ny=tty+dy; if(!tileWalkable(nx,ny,cr)) continue;
       const d=Math.hypot(nx-stx,ny-sty);
       if(d<bd){ bd=d; best={x:nx,y:ny}; } } if(best) break; }
     if(!best) return null; ttx=best.x; tty=best.y;
@@ -919,7 +925,7 @@ function findPathTiles(scx,scy,tcx,tcy){
   const S=sty*TGRD+stx, T=tty*TGRD+ttx;
   if(S===T) return [centre(T)];                            // a tap inside your own tile → step to its centre
   const gen=++_tpGen, G=_tpG, PREV=_tpPrev, MK=_tpMark;
-  const walk=(tx,ty)=> (tx===stx&&ty===sty) || tileWalkable(tx,ty);   // never trap the walker on its own tile
+  const walk=(tx,ty)=> (tx===stx&&ty===sty) || tileWalkable(tx,ty,cr);   // never trap the walker on its own tile
   // binary heap frontier (same discipline as the cell-grade A*)
   const hIdx=[], hF=[];
   const hPush=(i,f)=>{ let c=hIdx.length; hIdx.push(i); hF.push(f);
@@ -955,10 +961,11 @@ function findPathTiles(scx,scy,tcx,tcy){
   path.reverse(); return path;
 }
 /* --- A* pathfinding (8-dir, no corner cutting). size=2 needs a clear 2x2 footprint --- */
-function findPath(sx,sy,tx,ty,size){
-  if(mapMode==='forest') return findPathTiles(sx,sy,tx,ty);   // the surface world walks the 3m tile grid
+function findPath(sx,sy,tx,ty,size,cr){                       // cr=true: a creature is walking — gates bar its way
+  if(mapMode==='forest') return findPathTiles(sx,sy,tx,ty,cr);   // the surface world walks the 3m tile grid
   size=size||1;
-  const blk=(x,y)=>{ if(size<2) return isBlocked(x,y);
+  const blk=(x,y)=>{ if(cr && gateAtCell(x,y)) return true;
+    if(size<2) return isBlocked(x,y);
     for(let dy=0;dy<size;dy++)for(let dx=0;dx<size;dx++) if(isBlocked(x+dx,y+dy)) return true; return false; };
   if(!inGrid(tx,ty) || blk(tx,ty)) return null;
   if(sx===tx && sy===ty) return [];
@@ -1066,7 +1073,7 @@ const RACE_STATS = {
        Slots = how many DIFFERENT item types fit; the weight cap comes from your race. --- */
 const ITEM_LBS = { arrows:0.1, wheat:0.5, seeds:0.5, meat:1, jerky:1, meal:1, wood:2, skins:2,
   bow:2, longbow:3, helmet:3, hoe:3, iron:4, club:4, leggings:4, pickaxe:5, sword:6, silver:6,
-  armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5 };
+  armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5, bucket:4 };
 function carryCap(){ const rs=RACE_STATS[player.race]||RACE_STATS.human; return Math.round((rs.carry||100)*(1+cardVal('packmule'))); }   // Packmule broadens the back
 function overloadFactor(){                          // 1 = walk free · 0.25 = staggering (up to 20% over) · 0 = pinned flat
   const cap=carryCap(), w=packWeight();
@@ -1211,7 +1218,7 @@ function fireGoblinArrow(g, T){            // loose an arrow at a player (5 HP o
 }
 function goblinPathTo(g, cx, cy, size){
   const dest=nearestOpen(cx,cy); if(!dest) return false;
-  const cells=findPath(cellOf(g.px), cellOf(g.py), dest.x, dest.y, size||1); if(!cells) return false;
+  const cells=findPath(cellOf(g.px), cellOf(g.py), dest.x, dest.y, size||1, true); if(!cells) return false;
   g.gpath=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL})); return true;
 }
 /* --- goblins are wary of town: unless a player has drawn their blood (aggro), they keep 15 tiles clear of the shops --- */
@@ -1315,6 +1322,17 @@ function updateMelee(g, dt){
     if(boss && !T.dead){                                    // out of club reach — lob boulders while closing in
       g.boulderCD=(g.boulderCD||0)-dt;
       if(g.boulderCD<=0){ g.boulderCD=BOULDER_CD; bossThrowBoulder(g, T); }
+    }
+    if(pd<=12){                                             // a fence between monster and prey makes it MAD — it smashes through
+      const f=fenceNear(g.px, g.py, CELL*3.0);
+      if(f){ const fx=(f.tx*TILE+1.5)*CELL, fy=(f.ty*TILE+1.5)*CELL;
+        const a1=Math.atan2(T.py-g.py, T.px-g.px), a2=Math.atan2(fy-g.py, fx-g.px);
+        let da=Math.abs(a1-a2); if(da>Math.PI) da=Math.PI*2-da;
+        if(da<Math.PI/2.5){                                 // the wall truly stands between it and the player beyond
+          g.gpath=[]; g.face=face8(fx-g.px, fy-g.py); g.faceLeft=fx<g.px;
+          g.atkCD=(g.atkCD||0)-dt;
+          if(g.atkCD<=0){ g.atkCD=cd; damageFence(f, boss?10:wood?1:3); }
+          return; } }
     }
     g.repathG=(g.repathG||0)-dt;
     if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), boss?3:1); g.repathG=0.4; }
@@ -1499,7 +1517,7 @@ function updateBat(bt, dt){
   const T=nearestFoe(bt.px, bt.py);
   const pd=Math.hypot(cellOf(bt.px)-cellOf(T.px), cellOf(bt.py)-cellOf(T.py));
   const tryMove=(dx,dy,sp)=>{ const nx=bt.px+dx*sp*dt, ny=bt.py+dy*sp*dt;
-    if(!isBlocked(cellOf(nx), cellOf(ny))){ bt.px=nx; bt.py=ny; if(Math.abs(dx)>0.05) bt.faceLeft=dx<0; } };
+    if(!isBlocked(cellOf(nx), cellOf(ny)) && !gateAtCell(cellOf(nx), cellOf(ny))){ bt.px=nx; bt.py=ny; if(Math.abs(dx)>0.05) bt.faceLeft=dx<0; } };
   if(!T.dead && pd<=6){                         // swoop!
     const d=Math.hypot(T.px-bt.px, T.py-bt.py)||1;
     tryMove((T.px-bt.px)/d, (T.py-bt.py)/d, CELL*2.4);
@@ -1725,6 +1743,7 @@ const SHOP_ITEMS = [
 const SEED_ITEMS = [
   { key:'seeds', name:'Wheat Seeds (+5)', cost:1, verb:'bought', btn:'Buy', give(){ player.seeds+=5; }, owned(){ return player.seeds? player.seeds+' seeds':''; } },
   { key:'hoe', name:'Garden Hoe', cost:10, verb:'bought', btn:'Buy', give(){ player.hoe=1; }, has(){ return player.hoe>0; }, owned(){ return player.hoe? 'owned':''; } },
+  { key:'bucket', name:'Bucket', cost:8, verb:'bought', btn:'Buy', give(){ player.bucket=1; }, has(){ return player.bucket>0; }, owned(){ return player.bucket? 'owned':''; } },
 ];
 const FORGE_ITEMS = [
   { key:'sword', name:'Iron Sword', cost:15, cur:'iron', dmg:'7-11', btn:'Forge', verb:'forged',
@@ -1774,13 +1793,17 @@ const BUILDINGS = {
   stall:   { name:'Seed Stall',  tiles:1, cost:15, sum:'Sells wheat seeds and the garden hoe.' },
   butcher: { name:'The Butcher', tiles:1, cost:15, sum:'Smokes jerky and cooks meals from meat and wheat.' },
   bridge:  { name:'Bridge', tiles:1, cost:10, sum:'A plank crossing — sits ONLY on water. Chain tiles to span the creek.' },
+  well:    { name:'Well',   tiles:1, cost:8,  sum:'Draw water for the crops — a bucket fills with 5 water here.' },
+  fence:   { name:'Fence',  tiles:1, cost:5,  sum:'A stout log wall ('+30+' HP). Chain tiles — but monsters can smash it.' },
+  gate:    { name:'Gate',   tiles:1, cost:8,  sum:'Set it in a fence line — swings for players, never for creatures.' },
 };
+const MULTI_BUILD={ bridge:1, well:1, fence:1, gate:1 };   // kinds you can raise again and again
 const buildUI = { open:false };
 const siteUI  = { open:false, id:null };
 let buildMode = null;                 // {kind, tx, ty} — tx/ty in TILES; null tx = nothing hovered yet
 let _buildConfirmBox = null;          // screen-space "Build here" button while the ghost is green
 let _siteSeq = 1;
-function buildingPlaced(kind){ return kind==='bridge'?false : kind==='shop'?shop.placed : kind==='armor'?armorShop.placed : kind==='stall'?stall.placed : butcher.placed; }
+function buildingPlaced(kind){ return MULTI_BUILD[kind]?false : kind==='shop'?shop.placed : kind==='armor'?armorShop.placed : kind==='stall'?stall.placed : butcher.placed; }
 function siteById(id){ return (world.sites||[]).find(s=>s.id===id); }
 function siteAt(cx,cy){ for(const s of (world.sites||[])){ const n=BUILDINGS[s.kind].tiles*TILE;
   if(cx>=s.tx*TILE && cx<s.tx*TILE+n && cy>=s.ty*TILE && cy<s.ty*TILE+n) return s; } return null; }
@@ -1799,7 +1822,7 @@ function buildFootprintFree(kind, tx, ty){          // shops want open ground; a
 }
 function addSite(kind, tx, ty){                     // authoritative (host / solo)
   if(!BUILDINGS[kind] || buildingPlaced(kind)) return null;
-  if(kind!=='bridge' && (world.sites||[]).some(s=>s.kind===kind)) return null;   // one site per SHOP kind; bridges chain freely
+  if(!MULTI_BUILD[kind] && (world.sites||[]).some(s=>s.kind===kind)) return null;   // one site per SHOP kind; bridges/wells/fences/gates raise freely
   if(!buildFootprintFree(kind, tx, ty)) return null;
   const s={ id:_siteSeq++, kind, tx, ty, need:BUILDINGS[kind].cost, have:0 };
   world.sites.push(s); return s;
@@ -1830,6 +1853,38 @@ function placeBridgeTileAt(tx, ty, vert){           // lay planks across one who
     world.bridgeSet.add(gi(x,y)); }
   mmCanvas=null;
 }
+/* --- player-built STRUCTURES: wells, fences, gates. Tile-sized, multi-instance, host-authoritative.
+   A fence is a stout log wall with HP — monsters that spot a player beyond it get MAD and smash it.
+   A gate swings for players but never for creatures. A well fills buckets for the crops. --- */
+const FENCE_HP=30;
+function rebuildStructSets(){
+  world.fenceBlock=new Set(); world.gateBlock=new Set(); world.wellBlock=new Set();
+  const fill=(set,tx,ty)=>{ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) set.add(gi(tx*TILE+dx, ty*TILE+dy)); };
+  for(const f of (world.fences||[])) fill(world.fenceBlock, f.tx, f.ty);
+  for(const g2 of (world.gates||[])) fill(world.gateBlock, g2.tx, g2.ty);
+  for(const w of (world.wells||[])) fill(world.wellBlock, w.tx, w.ty);
+}
+function placeWellAt(tx,ty){ world.wells=world.wells||[]; if(world.wells.some(w=>w.tx===tx&&w.ty===ty)) return;
+  world.wells.push({tx,ty}); rebuildStructSets(); }
+function placeFenceAt(tx,ty,hp){ world.fences=world.fences||[]; const f=world.fences.find(f2=>f2.tx===tx&&f2.ty===ty);
+  if(f){ if(hp!=null) f.hp=hp; return; }
+  world.fences.push({tx,ty,hp:hp!=null?hp:FENCE_HP}); rebuildStructSets(); }
+function placeGateAt(tx,ty){ world.gates=world.gates||[]; if(world.gates.some(g2=>g2.tx===tx&&g2.ty===ty)) return;
+  world.gates.push({tx,ty}); rebuildStructSets(); }
+function fenceAtTile(tx,ty){ return (world.fences||[]).find(f=>f.tx===tx&&f.ty===ty)||null; }
+function structLinkAt(tx,ty){ return !!(fenceAtTile(tx,ty) || (world.gates||[]).some(g2=>g2.tx===tx&&g2.ty===ty)); }   // fences and gates chain into one wall
+function fenceNear(wx,wy,r){ let best=null, bd=r;
+  for(const f of (world.fences||[])){ const d=Math.hypot((f.tx*TILE+1.5)*CELL-wx, (f.ty*TILE+1.5)*CELL-wy);
+    if(d<bd){ bd=d; best=f; } } return best; }
+function damageFence(f, dmg){                       // authoritative (host / solo) — a monster batters the wall
+  if(!f || (world.fences||[]).indexOf(f)<0) return;
+  f.hp-=dmg;
+  const wx=(f.tx*TILE+1.5)*CELL, wy=(f.ty*TILE+1.4)*CELL;
+  if(!DEDICATED){ for(let i=0;i<4;i++) spawnChip(wx, wy); }
+  if(f.hp<=0){ world.fences.splice(world.fences.indexOf(f),1); rebuildStructSets();
+    if(!DEDICATED){ for(let i=0;i<12;i++) spawnChip(wx, wy);
+      addFloat('The fence is smashed!', wx, wy-CELL*1.4, '#e2a23a'); } }
+}
 function completeSite(s){
   const x0=s.tx*TILE, y0=s.ty*TILE;
   if(s.kind==='bridge') placeBridgeTileAt(s.tx, s.ty);
@@ -1837,6 +1892,9 @@ function completeSite(s){
   else if(s.kind==='armor') placeArmorShopAt(x0+1, y0+1);
   else if(s.kind==='stall') placeStallAt(x0, y0);                // 2x2 stall in its single tile
   else if(s.kind==='butcher') placeButcherAt(x0, y0);
+  else if(s.kind==='well') placeWellAt(s.tx, s.ty);
+  else if(s.kind==='fence') placeFenceAt(s.tx, s.ty);
+  else if(s.kind==='gate') placeGateAt(s.tx, s.ty);
   const i=world.sites.indexOf(s); if(i>=0) world.sites.splice(i,1);
   if(!DEDICATED) addFloat('The '+BUILDINGS[s.kind].name+' is built!', (x0+1.5)*CELL, y0*CELL, '#ffd44d');
 }
@@ -2376,8 +2434,43 @@ function plantSeeds(cx,cy){                        // sow wheat: ONE seed plants
   player.seeds--; if(player.seeds<=0 && player.tool==='seeds') player.tool=null;   // out of seeds → nothing selected
   if(typeof net!=='undefined' && net.mode==='guest') netSend({t:'cropAct', map:mapMode, op:'plant', key:gi(bx,by)});   // host sows the same plot
 }
-function updateCrops(dt){                          // sown seeds sprout into wheat after 10s
-  for(const c of world.crops.values()){ if(c.stage==='seed'){ c.t+=dt; if(c.t>=10) c.stage='wheat'; } }
+function updateCrops(dt){                          // sown seeds sprout into wheat after 10s — but ONLY once watered
+  for(const c of world.crops.values()){ if(c.stage==='seed' && c.w){ c.t+=dt; if(c.t>=10){ c.stage='wheat'; c.w=false; } } }
+}
+function useBucket(cx,cy){                         // the bucket: fill it at a well, pour it on a sown plot
+  const tx=Math.floor(cx/TILE), ty=Math.floor(cy/TILE);
+  const wl=(world.wells||[]).find(w=>w.tx===tx&&w.ty===ty);
+  if(wl){                                          // tapped a well → draw water
+    if(Math.hypot(player.px-(wl.tx*TILE+1.5)*CELL, player.py-(wl.ty*TILE+1.5)*CELL)>CELL*4.5){
+      addFloat('Walk closer to the well.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+    if(player.water>=5){ addFloat('The bucket is already full.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+    player.water=5; addFloat('Bucket filled! 5 water', player.px, player.py-CELL*1.9, '#7ec8d8');
+    for(let i=0;i<8;i++) addParticle({kind:'bit', x:(wl.tx*TILE+1.5)*CELL+(Math.random()-0.5)*CELL, y:(wl.ty*TILE+1.2)*CELL,
+      vx:(Math.random()-0.5)*80, vy:-60-Math.random()*80, g:260, life:0.5, max:0.5, size:CELL*0.06, color:'#7ec8d8'});
+    return;
+  }
+  const bx=cx-(cx%TILE), by=cy-(cy%TILE);          // tapped a plot → water the sown seeds
+  const c0=world.crops.get(gi(bx,by));
+  if(c0 && c0.stage==='seed'){
+    if(c0.w){ addFloat('Already watered.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+    if((player.water||0)<=0){ addFloat('The bucket is empty — fill it at a well.', player.px, player.py-CELL*1.9, '#e08a8a'); return; }
+    if(Math.hypot(player.px-(bx+1.5)*CELL, player.py-(by+1.5)*CELL)>CELL*4.5){
+      addFloat('Walk closer.', player.px, player.py-CELL*1.9, '#cfd6de'); return; }
+    waterPlot(bx, by);
+    return;
+  }
+  player.tool=null;                                // tapped bare ground → put the bucket away
+}
+function waterPlot(bx,by){                         // pour one water over a whole 3m plot
+  let n=0;
+  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(bx+dx,by+dy));
+    if(c && c.stage==='seed' && !c.w){ c.w=true; c.t=0; n++; } }
+  if(!n) return;
+  player.water=Math.max(0,(player.water||0)-1);
+  addFloat('Watered! ('+player.water+' left)', player.px, player.py-CELL*1.9, '#7ec8d8');
+  for(let i=0;i<12;i++) addParticle({kind:'bit', x:(bx+0.4+Math.random()*2.2)*CELL, y:(by+0.4+Math.random()*2.2)*CELL,
+    vx:(Math.random()-0.5)*40, vy:-40-Math.random()*60, g:240, life:0.45, max:0.45, size:CELL*0.055, color:'#4a9ec4'});
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'cropAct', map:mapMode, op:'water', key:gi(bx,by)});
 }
 /* ===== player-to-player trading =====
    Tap a player → walk to them → a handshake appears. Tap it and a trade window opens (they get an
@@ -2385,8 +2478,8 @@ function updateCrops(dt){                          // sown seeds sprout into whe
    TRADE. Any change to either grid clears both accepts. The swap only lands if BOTH packs can hold
    what they're getting; otherwise the whole trade fails and nothing moves. Messages ride the relay:
    {t:'tr', to, from, op}. */
-const TRADEABLE=['guld','wood','arrows','skins','wheat','meat','jerky','meal','seeds','iron','silver','club','bow','longbow','sword','gaxe','helmet','armor','leggings','chainmail'];
-const TRADE_NAMES={guld:'GULD', wood:'Wood', arrows:'Arrows', skins:'Skins', wheat:'Wheat', meat:'Deer Meat', jerky:'Jerky', meal:'Adv. Meal', seeds:'Seeds', iron:'Iron Ore', silver:'Silver Ore', club:'Club', bow:'Short Bow', longbow:'Long Bow', sword:'Iron Sword', gaxe:'Gleaming Axe', helmet:'Helmet', armor:'Armor', leggings:'Leggings', chainmail:'Chain Mail'};
+const TRADEABLE=['guld','wood','arrows','skins','wheat','meat','jerky','meal','seeds','bucket','iron','silver','club','bow','longbow','sword','gaxe','helmet','armor','leggings','chainmail'];
+const TRADE_NAMES={guld:'GULD', wood:'Wood', arrows:'Arrows', skins:'Skins', wheat:'Wheat', meat:'Deer Meat', jerky:'Jerky', meal:'Adv. Meal', seeds:'Seeds', bucket:'Bucket', iron:'Iron Ore', silver:'Silver Ore', club:'Club', bow:'Short Bow', longbow:'Long Bow', sword:'Iron Sword', gaxe:'Gleaming Axe', helmet:'Helmet', armor:'Armor', leggings:'Leggings', chainmail:'Chain Mail'};
 const trade={ open:false, pid:0, joined:false, mine:{}, theirs:{}, mySeq:0, theirSeq:0,
               myAcc:false, theirAcc:false, myReady:false, theirReady:false, done:false, msg:'', msgT:0 };
 function findRemote(pid){ for(const p of remotePlayers()){ if((p.id|0)===(pid|0)) return p; } return null; }
@@ -2692,6 +2785,58 @@ function drawBag(b){                                // a little dropped sack, fa
   circle(s.x, s.y-u*0.34, u*0.08, '#e7c877');
   ctx.restore();
 }
+function drawWell(s){                               // a stone ring, two posts and a little gabled roof
+  const u=Math.max(8, CELL*cam.scale);
+  ctx.save();
+  shadow(s.x, s.y+u*0.15, u*1.25, u*0.4);
+  ctx.fillStyle='#8a949e'; ctx.beginPath(); ctx.ellipse(s.x, s.y, u*1.05, u*0.52, 0, 0, Math.PI*2); ctx.fill();   // stone ring
+  ctx.fillStyle='#5c6670'; ctx.beginPath(); ctx.ellipse(s.x, s.y-u*0.12, u*0.78, u*0.36, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1d2c3a'; ctx.beginPath(); ctx.ellipse(s.x, s.y-u*0.12, u*0.6, u*0.26, 0, 0, Math.PI*2); ctx.fill();   // the dark water below
+  ctx.fillStyle='#3a6ea8'; ctx.beginPath(); ctx.ellipse(s.x, s.y-u*0.1, u*0.42, u*0.16, 0, 0, Math.PI*2); ctx.fill();
+  beam(s.x-u*0.85, s.y-u*0.1, s.x-u*0.85, s.y-u*1.7, u*0.14, '#6e4526');   // posts
+  beam(s.x+u*0.85, s.y-u*0.1, s.x+u*0.85, s.y-u*1.7, u*0.14, '#6e4526');
+  beam(s.x-u*0.85, s.y-u*1.35, s.x+u*0.85, s.y-u*1.35, u*0.09, '#8a5a34'); // crank beam
+  circle(s.x+u*0.95, s.y-u*1.35, u*0.12, '#4a2f18');                        // crank handle
+  beam(s.x, s.y-u*1.35, s.x, s.y-u*0.75, u*0.045, '#c9b391');               // the rope
+  circle(s.x, s.y-u*0.68, u*0.14, '#6e4526');                               // the bucket on the rope
+  tri([s.x-u*1.1, s.y-u*1.6],[s.x+u*1.1, s.y-u*1.6],[s.x, s.y-u*2.25], '#8a4a3a');   // the little roof
+  ctx.restore();
+}
+function drawFence(s, f){                           // a stout log wall: posts + three rails, chaining with its neighbors
+  const u=Math.max(8, CELL*cam.scale), half=u*1.5;
+  const linkW=structLinkAt(f.tx-1, f.ty), linkE=structLinkAt(f.tx+1, f.ty);
+  ctx.save();
+  shadow(s.x, s.y+u*0.12, half*0.95, u*0.3);
+  for(const [ry, col] of [[1.05,'#6e4526'],[0.65,'#8a5a34'],[0.25,'#8a5a34']])                // three rails, bottom to top
+    beam(s.x-half, s.y-u*ry, s.x+half, s.y-u*ry, u*0.26, col);
+  const post=(px)=>{ beam(px, s.y+u*0.08, px, s.y-u*1.5, u*0.3, '#5c3a1e');
+    circle(px, s.y-u*1.5, u*0.16, '#4a2f18'); };
+  post(s.x);                                                                                   // centre post always
+  if(!linkW) post(s.x-half+u*0.14);                                                            // end posts only where the wall ends
+  if(!linkE) post(s.x+half-u*0.14);
+  if(f.hp<FENCE_HP){                                                                           // a battered wall shows its wounds
+    const bw=u*1.6, bh=Math.max(3,u*0.12), bx=s.x-bw/2, by=s.y-u*2.0;
+    rect(bx-1.5, by-1.5, bw+3, bh+3, 'rgba(15,10,8,.7)');
+    rect(bx, by, bw*Math.max(0, f.hp/FENCE_HP), bh, '#d43a2a');
+  }
+  ctx.restore();
+}
+function drawGate(s, g){                            // tall posts and a crossbar — the doors stand open for players
+  const u=Math.max(8, CELL*cam.scale), half=u*1.5;
+  ctx.save();
+  shadow(s.x, s.y+u*0.12, half*0.9, u*0.28);
+  beam(s.x-half+u*0.15, s.y+u*0.08, s.x-half+u*0.15, s.y-u*2.0, u*0.32, '#5c3a1e');   // gate posts
+  beam(s.x+half-u*0.15, s.y+u*0.08, s.x+half-u*0.15, s.y-u*2.0, u*0.32, '#5c3a1e');
+  beam(s.x-half, s.y-u*2.0, s.x+half, s.y-u*2.0, u*0.24, '#6e4526');                  // the crossbar overhead
+  // the two doors, swung open toward the viewer
+  for(const dir of [-1, 1]){
+    const px=s.x+dir*(half-u*0.15), ox=s.x+dir*(half-u*0.85);
+    beam(px, s.y-u*1.2, ox, s.y-u*0.55, u*0.16, '#8a5a34');
+    beam(px, s.y-u*0.62, ox, s.y+u*0.03, u*0.16, '#8a5a34');
+    circle(px, s.y-u*1.2, u*0.08, '#e7c877');                                          // hinges glint
+  }
+  ctx.restore();
+}
 let _dropL=null;
 function drawDropUI(){                              // pick an item, then pick how many
   if(!dropUI.open){ _dropL=null; return; }
@@ -2894,6 +3039,7 @@ function onTapWorld(wx,wy){
   const cx=Math.max(0,Math.min(GRID-1,Math.floor(wx/CELL))), cy=Math.max(0,Math.min(GRID-1,Math.floor(wy/CELL)));
   if(player.tool==='hoe'){ tillOrUntill(cx,cy); return; }        // till / untill a crop plot
   if(player.tool==='seeds'){ plantSeeds(cx,cy); return; }        // sow wheat on a plot
+  if(player.tool==='bucket'){ useBucket(cx,cy); return; }        // fill at a well / water a sown plot
   if(player.tool==='pickaxe'){
     const rk=rockAt(cx,cy);
     if(rk){ beginMine(rk); return; }
@@ -3016,7 +3162,7 @@ function separate(e, dt){                                 // creatures prefer no
 }
 
 function deerPathTo(d, cx, cy){
-  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1);   // 2x2 creatures need a clear footprint
+  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, true);   // 2x2 creatures need a clear footprint
   if(!cells) return false;
   d.path=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL}));
   return true;
@@ -4268,6 +4414,9 @@ function drawMinimap(){
       sq((B2.x+(B2.w||3)/2)*CELL, (B2.y+(B2.h||3)/2)*CELL, Math.max(2.5,3*DPR), '#d6d6d6'); }
     for(const s of (world.sites||[])){ const n2=BUILDINGS[s.kind].tiles*TILE;                  // build sites: hollow grey — still rising
       sq((s.tx*TILE+n2/2)*CELL, (s.ty*TILE+n2/2)*CELL, Math.max(2.5,3*DPR), '#b8b8b8', true); }
+    for(const f of (world.fences||[])) sq((f.tx*TILE+1.5)*CELL, (f.ty*TILE+1.5)*CELL, Math.max(1.5,1.8*DPR), '#b58a50');   // fence line
+    for(const g2 of (world.gates||[])) sq((g2.tx*TILE+1.5)*CELL, (g2.ty*TILE+1.5)*CELL, Math.max(1.5,1.8*DPR), '#e7c877'); // gates glint
+    for(const w of (world.wells||[]))  dot((w.tx*TILE+1.5)*CELL, (w.ty*TILE+1.5)*CELL, Math.max(2,2.4*DPR), '#7ec8d8');    // wells
   }
   dot(player.px, player.py, Math.max(3,3.5*DPR), '#ffffff');                                   // you
   ctx.restore();
@@ -4527,12 +4676,13 @@ function draw(){
     rect(a.x, a.y, b.x-a.x+1, b.y-a.y+1, m.edge?PAL.dirtDark:PAL.dirt);
   }
   // tilled crop plots: ONE furrowed 3m-tile patch per plot, inset to leave a grass edge
-  for(const [key] of world.crops){ const cx=key%GRID, cy=(key/GRID)|0;
+  for(const [key,cc] of world.crops){ const cx=key%GRID, cy=(key/GRID)|0;
     if(cx%TILE || cy%TILE) continue;                                        // draw once, from the plot's origin cell
     const a=worldToScreen(cx*CELL,cy*CELL), b=worldToScreen((cx+TILE)*CELL,(cy+TILE)*CELL);
     if(a.x>canvas.width||a.y>canvas.height||b.x<0||b.y<0) continue;
     const insx=(b.x-a.x)*0.05, insy=(b.y-a.y)*0.05, x0=a.x+insx, y0=a.y+insy, w=(b.x-a.x)-2*insx, h=(b.y-a.y)-2*insy;
     rect(x0, y0, w+1, h+1, PAL.farm);
+    if(cc.w && cc.stage==='seed') rect(x0, y0, w+1, h+1, 'rgba(40,70,120,.28)');    // watered soil reads dark and damp
     ctx.strokeStyle=PAL.farmFurrow; ctx.lineWidth=Math.max(1,DPR*0.9); ctx.beginPath();
     for(let k=1;k<=4;k++){ const yy=y0+h*k/5; ctx.moveTo(x0+1,yy); ctx.lineTo(x0+w-1,yy); }
     ctx.stroke();
@@ -4583,6 +4733,9 @@ function draw(){
   if(shop.placed) items.push({wx:(shop.x+shop.w/2)*CELL, wy:(shop.y+shop.h)*CELL, kind:9});   // shop billboard, anchored at its front wall
   for(const s2 of (world.sites||[])) items.push({wx:(s2.tx*TILE+BUILDINGS[s2.kind].tiles*TILE/2)*CELL, wy:(s2.ty*TILE+BUILDINGS[s2.kind].tiles*TILE)*CELL, kind:29, ref:s2});   // build sites
   for(const b2 of (world.bags||[])) items.push({wx:(b2.x+0.5)*CELL, wy:(b2.y+1)*CELL, kind:30, ref:b2});   // dropped bags
+  for(const w2 of (world.wells||[]))  items.push({wx:(w2.tx*TILE+1.5)*CELL, wy:(w2.ty*TILE+2.8)*CELL, kind:31, ref:w2});   // wells
+  for(const f2 of (world.fences||[])) items.push({wx:(f2.tx*TILE+1.5)*CELL, wy:(f2.ty*TILE+2.8)*CELL, kind:32, ref:f2});   // fences
+  for(const g3 of (world.gates||[]))  items.push({wx:(g3.tx*TILE+1.5)*CELL, wy:(g3.ty*TILE+2.8)*CELL, kind:33, ref:g3});   // gates
   if(stall.placed) items.push({wx:(stall.x+stall.w/2+0.5)*CELL, wy:(stall.y+stall.h+0.5)*CELL, kind:13});   // seed stall — half a cell over so the 2x2 sits centred in its 3-cell tile
   if(butcher.placed) items.push({wx:(butcher.x+butcher.w/2+0.5)*CELL, wy:(butcher.y+butcher.h+0.5)*CELL, kind:28});   // butcher's stall — likewise centred
   if(armorShop.placed) items.push({wx:(armorShop.x+armorShop.w/2)*CELL, wy:(armorShop.y+armorShop.h)*CELL, kind:14});   // armor shop
@@ -4668,6 +4821,9 @@ function draw(){
     else if(it.kind===13) drawStall(s);
     else if(it.kind===29) drawSite(it.ref);
     else if(it.kind===30) drawBag(it.ref);
+    else if(it.kind===31) drawWell(s);
+    else if(it.kind===32) drawFence(s, it.ref);
+    else if(it.kind===33) drawGate(s, it.ref);
     else if(it.kind===28) drawButcher(s);
     else if(it.kind===14) drawArmorShop(s);
     else if(it.kind===10) drawTurtle(s, it.ref);
@@ -5179,6 +5335,7 @@ function shopUILayout(){
   return {px,py,pw,ph,pad,headH,rowH,footH,closeBtn,rows};
 }
 function drawShopItemIcon(key, x, y, s){            // x,y = icon centre
+  if(key==='bucket'){ drawBucketIcon(x, y, s*1.4); return; }
   if(key==='longbow'){ drawShopItemIcon('bow', x, y, s*1.18); return; }   // the long bow: same lines, grander sweep
   if(key==='sword'){ beam(x-s*0.32,y+s*0.38, x+s*0.34,y-s*0.36, s*0.11, '#b9c2cc');   // iron blade
     tri([x+s*0.28,y-s*0.42],[x+s*0.44,y-s*0.26],[x+s*0.42,y-s*0.44], '#d7dde4');
@@ -5499,7 +5656,7 @@ const WEAPON_DEFS = [
   { k:'bow',     name:'Short Bow',        dmg:'4-6',   slot:'ranged' },
   { k:'longbow', name:'Long Bow',         dmg:'6-9',   slot:'ranged' },
 ];
-const RESOURCE_DEFS = [ ['guld','GULD'], ['wood','Wood'], ['iron','Iron'], ['silver','Silver'], ['arrows','Arrows'], ['seeds','Seeds'], ['wheat','Wheat'], ['meat','Deer Meat'], ['jerky','Venison Jerky'], ['meal','Adventure Meal'], ['skins','Skins'], ['souls','Souls'], ['witchEye','Eye of the Witch'], ['goblinKey','Goblin Key'] ];
+const RESOURCE_DEFS = [ ['guld','GULD'], ['wood','Wood'], ['iron','Iron'], ['silver','Silver'], ['arrows','Arrows'], ['seeds','Seeds'], ['bucket','Bucket'], ['wheat','Wheat'], ['meat','Deer Meat'], ['jerky','Venison Jerky'], ['meal','Adventure Meal'], ['skins','Skins'], ['souls','Souls'], ['witchEye','Eye of the Witch'], ['goblinKey','Goblin Key'] ];
 const ARMOR_DEFS = [
   { k:'helmet',   name:'Leather Helmet',   prot:1, eq:'eqHelmet'   },
   { k:'armor',    name:'Leather Armor',    prot:2, eq:'eqArmor'    },
@@ -5677,6 +5834,7 @@ function drawCardsTab(M){                              // THE MIND — the brain
   _cardRows=rows;
 }
 function drawResourceIcon(key, x, y, s){               // small icons for the resources tab
+  if(key==='bucket'){ drawBucketIcon(x, y, s*1.2); return; }
   if(key==='wood'){ rect(x-s*0.4,y-s*0.05,s*0.8,s*0.26,PAL.trunk); rect(x-s*0.28,y-s*0.3,s*0.8,s*0.26,PAL.pWood); }
   else if(key==='arrows'){ rect(x-s*0.4,y-s*0.04,s*0.7,s*0.08,PAL.trunk); tri([x+s*0.3,y-s*0.12],[x+s*0.3,y+s*0.12],[x+s*0.48,y],PAL.axeBlade); tri([x-s*0.4,y],[x-s*0.55,y-s*0.12],[x-s*0.55,y+s*0.12],PAL.pMilk); }
   else if(key==='seeds'){ for(const [dx,dy] of [[-0.2,-0.1],[0.05,0.1],[0.25,-0.05],[-0.05,-0.25],[0.15,0.22]]) circle(x+dx*s, y+dy*s, s*0.08, '#e7c877'); }
@@ -5796,6 +5954,9 @@ function drawMapTab(M){                                // the whole world, writ 
     for(const s of (world.sites||[])){ const n2=BUILDINGS[s.kind].tiles*TILE;
       sq2((s.tx*TILE+n2/2)*CELL, (s.ty*TILE+n2/2)*CELL, Math.max(2.5,3*DPR), '#b8b8b8', true); }
     for(const b of (world.bags||[])) dot((b.x+0.5)*CELL, (b.y+0.5)*CELL, Math.max(2,2.2*DPR), '#e7c877');   // dropped bags glint gold
+    for(const f of (world.fences||[])) sq2((f.tx*TILE+1.5)*CELL, (f.ty*TILE+1.5)*CELL, Math.max(1.5,1.8*DPR), '#b58a50');   // fence line
+    for(const g2 of (world.gates||[])) sq2((g2.tx*TILE+1.5)*CELL, (g2.ty*TILE+1.5)*CELL, Math.max(1.5,1.8*DPR), '#e7c877'); // gates
+    for(const w of (world.wells||[]))  dot((w.tx*TILE+1.5)*CELL, (w.ty*TILE+1.5)*CELL, Math.max(2,2.4*DPR), '#7ec8d8');     // wells
   }
   for(const RP of (typeof remotePlayers==='function'?remotePlayers():[])){
     if(RP.active && !RP.dead && (RP.map||'forest')===mapMode) dot(RP.px, RP.py, Math.max(3,3.5*DPR), '#6bd3ff'); }
@@ -5971,7 +6132,7 @@ function menuUIClick(cx,cy){                           // one click handler for 
 }
 /* --- tool bar (screen-space, bottom-centre): axe always; club/bow once crafted --- */
 function toolGroups(){
-  const tools=['axe']; if(player.pickaxe>0) tools.push('pickaxe'); if(player.hoe>0) tools.push('hoe'); if(player.seeds>0) tools.push('seeds');
+  const tools=['axe']; if(player.pickaxe>0) tools.push('pickaxe'); if(player.hoe>0) tools.push('hoe'); if(player.seeds>0) tools.push('seeds'); if(player.bucket>0) tools.push('bucket');
   const weapons=[];                                                                                 // weapon buttons appear only when EQUIPPED (see the inventory screen)
   if(player.equipMelee && player[player.equipMelee]>0) weapons.push(player.equipMelee);
   if((player.equipRanged==='bow'&&player.bow>0) || (player.equipRanged==='longbow'&&player.longbow>0)) weapons.push(player.equipRanged);
@@ -6016,7 +6177,21 @@ function eatFood(k){                                  // tap a food button: hung
     foodCD=FOOD_CD;
   }
 }
+function drawBucketIcon(cx, cy, s){                   // a wooden pail — a blue gleam when it holds water
+  ctx.save();
+  ctx.fillStyle='#8a5a34'; ctx.beginPath();
+  ctx.moveTo(cx-s*0.26, cy-s*0.14); ctx.lineTo(cx+s*0.26, cy-s*0.14);
+  ctx.lineTo(cx+s*0.18, cy+s*0.24); ctx.lineTo(cx-s*0.18, cy+s*0.24); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#5c3a1e'; ctx.lineWidth=Math.max(1.5, s*0.045); ctx.stroke();
+  beam(cx-s*0.22, cy+s*0.03, cx+s*0.22, cy+s*0.03, s*0.035, '#5c3a1e');       // the iron band
+  ctx.strokeStyle='#4a2f18'; ctx.lineWidth=Math.max(1.5, s*0.05);
+  ctx.beginPath(); ctx.arc(cx, cy-s*0.12, s*0.24, Math.PI, 0); ctx.stroke();  // the handle
+  if((player.water||0)>0){ ctx.fillStyle='#4a9ec4'; ctx.beginPath();
+    ctx.ellipse(cx, cy-s*0.14, s*0.22, s*0.065, 0, 0, Math.PI*2); ctx.fill(); }
+  ctx.restore();
+}
 function drawToolIcon(key, cx, cy, s){
+  if(key==='bucket'){ drawBucketIcon(cx, cy, s); return; }
   if(key==='build'){                                  // a mallet over a fresh plank
     rect(cx-s*0.3, cy+s*0.16, s*0.6, s*0.1, PAL.plankHi);
     beam(cx-s*0.16, cy+s*0.1, cx+s*0.12, cy-s*0.16, s*0.055, PAL.trunk);
@@ -6103,7 +6278,7 @@ function drawToolBar(){
     drawToolIcon(b.key, b.x+b.w/2, b.y+b.h*0.42, b.w);
     ctx.fillStyle='#ffffff'; ctx.font='bold '+Math.round(b.w*0.19)+'px system-ui, sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillText(b.key, b.x+b.w/2, b.y+b.h*0.92);
-    const badge = b.key==='seeds'?player.seeds : (b.key==='bow'||b.key==='longbow')?player.arrows : b.key==='jerky'?player.jerky : b.key==='meal'?player.meal : null;   // count badge (seeds / arrows / food)
+    const badge = b.key==='seeds'?player.seeds : (b.key==='bow'||b.key==='longbow')?player.arrows : b.key==='jerky'?player.jerky : b.key==='meal'?player.meal : b.key==='bucket'?player.water : null;   // count badge (seeds / arrows / food / water)
     if(badge!=null){
       ctx.fillStyle=PAL.stamFill; ctx.font='bold '+Math.round(b.w*0.24)+'px system-ui, sans-serif';
       ctx.textAlign='right'; ctx.textBaseline='top'; ctx.fillText(badge, b.x+b.w-4*DPR, b.y+3*DPR);
@@ -6528,6 +6703,7 @@ function resetPlayerStats(){                         // fresh start: full HP, st
   if(player.level==null){ player.level=1; player.xp=0; }   // level/XP are identity — they survive a death; only a NEW character resets them (startAsRace)
   if(player.cards==null) player.cards={};                  // cards are identity too — a death forgets nothing
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
+  player.bucket=0; player.water=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
   player.equipMelee=null; player.equipRanged='bow';   // fresh hero sets out with a short bow equipped
@@ -6929,9 +7105,12 @@ function buildSnap(){
   if(extras){
     sn.sites=(world.sites||[]).map(s=>[s.id,s.kind,s.tx,s.ty,s.need,s.have]);
     sn.brg=(world.builtBridges||[]).slice();
+    sn.wl=(world.wells||[]).map(w=>[w.tx,w.ty]);                       // wells, fences (with HP) and gates — the built world
+    sn.fn=(world.fences||[]).map(f=>[f.tx,f.ty,f.hp]);
+    sn.gt=(world.gates||[]).map(g2=>[g2.tx,g2.ty]);
     sn.bld=[shop.placed?[shop.x,shop.y]:0, stall.placed?[stall.x,stall.y]:0, butcher.placed?[butcher.x,butcher.y]:0, armorShop.placed?[armorShop.x,armorShop.y]:0];
     const bush=[]; for(const b of world.bushes) bush.push(b.grow==null?[b.x,b.y]:[b.x,b.y,+(+b.grow).toFixed(2)]);
-    const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?1:2]);   // crops so the guest sees wheat ripen
+    const crops=[]; for(const [k,c] of world.crops) crops.push([k, c.stage==='till'?0:c.stage==='seed'?(c.w?3:1):2]);   // crops so the guest sees wheat ripen (3 = watered seed)
     sn.bush=bush; sn.crops=crops;
     sn.rk=(mapMode==='dungeon'&&world.rocks)?world.rocks.map(r=>r.gone?1:0):null;
     sn.pk=(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null;
@@ -6980,6 +7159,11 @@ function netApplySnap(m){                              // world portion of a sna
     if(heldBag && heldBag.loc && !bagById(bagUI.id)){ const m3=world.bags.find(b=>b.x===heldBag.x&&b.y===heldBag.y); if(m3) bagUI.id=m3.id; }
     if(bagUI.open && !bagById(bagUI.id)) bagUI.open=false; }
   if(m.brg){ for(const b of m.brg){ if(!(world.builtBridges||[]).some(x2=>x2[0]===b[0]&&x2[1]===b[1])) placeBridgeTileAt(b[0], b[1], b[2]); } }
+  if(m.wl || m.fn || m.gt){                                              // wells / fences / gates: mirror the host's built world
+    if(m.wl) world.wells=m.wl.map(a=>({tx:a[0]|0, ty:a[1]|0}));
+    if(m.fn) world.fences=m.fn.map(a=>({tx:a[0]|0, ty:a[1]|0, hp:+a[2]||0}));
+    if(m.gt) world.gates=m.gt.map(a=>({tx:a[0]|0, ty:a[1]|0}));
+    rebuildStructSets(); }
   if(m.tf){ for(const s of m.tf){                                        // reconcile the canopy with the host's stumps
     const t=(world.trees||[]).find(t2=>t2.x===s[0]&&t2.y===s[1]);
     if(t){ world.trees.splice(world.trees.indexOf(t),1);                 // old news — no falling animation, just the stump
@@ -6995,13 +7179,13 @@ function netApplySnap(m){                              // world portion of a sna
   if(m.crops){ world.crops.clear();
     const hold=net._reapHold=net._reapHold||new Map();
     for(const [k,st] of m.crops){
-      let stage = st===0?'till':st===1?'seed':'wheat';
+      let stage = st===0?'till':(st===1||st===3)?'seed':'wheat';
       if(hold.has(k)){
         if(stage==='wheat'){ const n2=hold.get(k)+1;               // a snap from before our reap — the wheat stays reaped
           if(n2<=3){ hold.set(k, n2); stage='till'; } else hold.delete(k); }   // (…unless the host insists several snaps running)
         else hold.delete(k);                                       // the host caught up — back to normal
       }
-      world.crops.set(k, {stage, t:0}); } }
+      world.crops.set(k, {stage, t:0, w:st===3}); } }
   if(m.cv && !cave.unlocked) setCaveUnlocked();
   if(m.rk && mapMode==='dungeon' && world.rocks){ m.rk.forEach((gflag,i)=>{ const r=world.rocks[i];
     if(r && gflag && !r.gone){ r.gone=true; if(world.rockBlock) world.rockBlock.delete(gi(r.x,r.y)); } }); }
@@ -7069,6 +7253,8 @@ function netOnData(m, fromClient){
     if(m.op==='till'){ tillOrUntill(m.cx, m.cy); }
     else if(m.op==='plant'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
       for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(x0+dx,y0+dy)); if(c && c.stage==='till'){ c.stage='seed'; c.t=0; } } }
+    else if(m.op==='water'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
+      for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(x0+dx,y0+dy)); if(c && c.stage==='seed' && !c.w){ c.w=true; c.t=0; } } }
     else if(m.op==='harv'){ const px2=m.key%GRID, py2=(m.key/GRID)|0, x0=px2-(px2%TILE), y0=py2-(py2%TILE);
       let n=0; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const c=world.crops.get(gi(x0+dx,y0+dy)); if(c && c.stage==='wheat'){ c.stage='till'; c.t=0; n++; } }
       if(n) spawnHarvestFX((x0+TILE/2)*CELL,(y0+TILE/2)*CELL); } } }
