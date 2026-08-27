@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · k';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · l';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1070,7 +1070,7 @@ const RACE_STATS = {
        Slots = how many DIFFERENT item types fit; the weight cap comes from your race. --- */
 const ITEM_LBS = { arrows:0.1, wheat:0.5, seeds:0.5, meat:1, jerky:1, meal:1, wood:2, skins:2,
   bow:2, longbow:3, helmet:3, hoe:3, iron:4, club:4, leggings:4, pickaxe:5, sword:6, silver:6,
-  armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5, bucket:4 };
+  armor:8, gaxe:12, chainmail:15, goblinKey:0.5, witchEye:0.5, bucket:4, lantern:2 };
 function carryCap(){ const rs=RACE_STATS[player.race]||RACE_STATS.human; return Math.round((rs.carry||100)*(1+cardVal('packmule'))); }   // Packmule broadens the back
 function overloadFactor(){                          // 1 = walk free · 0.25 = staggering (up to 20% over) · 0 = pinned flat
   const cap=carryCap(), w=packWeight();
@@ -1166,7 +1166,11 @@ function spawnRoamers(){
   const bows=[];
   for(let i=0;i<9;i++){ const c=westOpen(); const g=makeRoamer(c.x,c.y,'archer',null); bows.push(g); goblins.push(g); }   // bow goblins
   for(let i=0;i<21;i++){ const c=westOpen(); goblins.push(makeRoamer(c.x,c.y,'claw', bows[i%bows.length])); }              // followers
-  const wc=westOpen(); goblins.push(makeWitch(wc.x, wc.y));                                                                 // the goblin witch
+  // the goblin witch haunts the EAST bank — among the herds and their bones, where her raising work is
+  const minEX=Math.max(2, Math.min(GRID-4, (world.creekMaxX!=null?world.creekMaxX:0)+2));
+  const eastOpen=()=>{ for(let i=0;i<500;i++){ const x=minEX+((Math.random()*(GRID-minEX-2))|0), y=2+((Math.random()*(GRID-4))|0);
+    if(spawnableCell(x,y)) return {x,y}; } return randOpenCell(); };
+  const wc=eastOpen(); goblins.push(makeWitch(wc.x, wc.y));
 }
 const GOB_SPEED = CELL*1.5;          // archer walking speed (creature pace restored +25%)
 const WITCH_SPEED = MOVE_SPEED;      // the witch glides as fast as a human hero
@@ -1468,7 +1472,7 @@ function updateSkeleton(s, dt){        // tracks & punches the nearest player to
   if(T.dead){ s.gpath=[]; return; }
   const pd=Math.hypot(cellOf(s.px)-cellOf(T.px), cellOf(s.py)-cellOf(T.py));
   s.hopAmt=0;
-  const reach=s.big?2:1.6, dmgS=s.big?8:5, spd=(s.big?MOVE_SPEED*1.2:MOVE_SPEED*1.6)*0.5;   // the dead shamble at half pace
+  const reach=s.big?2:1.6, dmgS=s.big?8:5, spd=s.big?MOVE_SPEED*0.5:MOVE_SPEED*0.65;   // the dead SHAMBLE — slower than even a Half-Orc (0.84x), so anyone can outrun them
   if(pd<=reach){
     s.gpath=[]; s.face=face8(T.px-s.px, T.py-s.py); s.faceLeft=T.px<s.px;
     s.atkCD=(s.atkCD||0)-dt;
@@ -1714,6 +1718,7 @@ const SHOP_ITEMS = [
   { key:'club',   name:'Wooden Club', cost:10, dmg:'3-6', give(){ player.club++; },   owned(){ return player.club?  'owned: '+player.club : ''; } },   // goes to the pack — equip it there
   { key:'longbow', name:'Long Bow',   cost:20, dmg:'6-9', give(){ player.longbow++; }, owned(){ return player.longbow? 'owned: '+player.longbow : ''; } },   // goes to the pack — equip it there
   { key:'arrows', name:'Arrows (+10)',cost:5,             give(){ player.arrows+=10; },owned(){ return player.arrows? player.arrows+' in quiver' : ''; } },
+  { key:'lantern', name:'Lantern', cost:20, give(){ player.lantern=1; }, has(){ return player.lantern>0; }, owned(){ return player.lantern? 'owned':''; } },
 ];
 const SEED_ITEMS = [
   { key:'seeds', name:'Wheat Seeds (+5)', cost:1, verb:'bought', btn:'Buy', give(){ player.seeds+=5; }, owned(){ return player.seeds? player.seeds+' seeds':''; } },
@@ -1891,11 +1896,16 @@ function spawnWoodLob(sx, sy, tx, ty, n){           // donated logs LOB themselv
       tx:tx+(Math.random()-0.5)*CELL*0.9, ty:ty+(Math.random()-0.5)*CELL*0.6,
       t:-i*0.13, dur, arc:CELL*(1.6+Math.random()*0.7), spin:Math.random()*Math.PI, life:99, max:99 });
 }
+function siteDistCells(s){                          // distance (in cells) from the hero to the site's EDGE, not its centre
+  const n=BUILDINGS[s.kind].tiles*TILE, x0=s.tx*TILE, y0=s.ty*TILE;
+  const px=player.px/CELL, py=player.py/CELL;
+  const dx=Math.max(x0-px, 0, px-(x0+n)), dy=Math.max(y0-py, 0, py-(y0+n));
+  return Math.hypot(dx,dy);
+}
 function siteContribute(){                          // the Add Wood button on a site's panel
   const s=siteById(siteUI.id); if(!s){ siteUI.open=false; return; }
   if(s.loc){ shop.msg='Staking the site…'; shop.msgT=1.5; return; }         // a breath while the host confirms — no wood is lost
-  const dTiles=Math.hypot(player.px/CELL-(s.tx*TILE+BUILDINGS[s.kind].tiles*TILE/2), player.py/CELL-(s.ty*TILE+BUILDINGS[s.kind].tiles*TILE/2));
-  if(dTiles>5){ shop.msg='Walk closer to the site'; shop.msgT=2; return; }
+  if(siteDistCells(s)>5){ shop.msg='Walk closer to the site'; shop.msgT=2; return; }   // ANY tile beside the footprint is close enough
   const n=Math.min(5, s.need-s.have, player.wood); if(n<=0){ shop.msg=player.wood<=0?'You have no wood':''; shop.msgT=2; return; }
   player.wood-=n; addFloat('-'+n+' wood', player.px, player.py-CELL*1.7, PAL.plankHi);
   const lx=player.px, ly=player.py-CELL*0.6;                                          // the logs fly from your hands…
@@ -2209,8 +2219,10 @@ function fireArrow(cr, kind){
   const bw2=player.equipRanged||'bow', mt=(player.magic&&player.magic[bw2])||0;
   const spd=CELL*9*(mt>=1?1.3:mt>0?1.1:1);                       // blessed arrows fly 10% faster; enchanted 30%
   const tx=p.x, ty=p.y-CELL*0.3, dist=Math.hypot(tx-sx, ty-sy)||1, dur=Math.max(0.28, dist/spd);
+  const dmg=rollDmg(bw2);                                        // the damage rides WITH the arrow —
+  cr._pin=(cr._pin||0)+dmg;                                      // — and counts as "in flight" so we never waste follow-up shots
   addParticle({ kind:'arrow', x:sx, y:sy, x0:sx, y0:sy, tx, ty, t:0, dur, life:99, max:99,
-    ang:Math.atan2(ty-sy, tx-sx), ref:cr, tkind:kind, w:bw2, mt });
+    ang:Math.atan2(ty-sy, tx-sx), ref:cr, tkind:kind, w:bw2, mt, dmg });
   if(typeof netSendArrowFX==='function') netSendArrowFX(sx, sy, tx, ty, dur, mt);   // let the other player watch it fly
 }
 function startPunch(prop){                          // walk over to a crate/barrel and punch it apart
@@ -2254,7 +2266,10 @@ function updateCombat(dt){
     player.path=[]; player.targetCell=null; player.face=face8(p.x-player.px, p.y-player.py);
     if(A.ranged){
       if(player.arrows<=0){ player.attack=null; }                        // out of arrows → stop
-      else if(player.swingCD<=0){ player.swingCD=0.8*coolMul(); player.arrows--; fireArrow(A.ref, A.kind); }   // keep loosing arrows (each does the equipped bow's DMG on hit)
+      else if(player.swingCD<=0){
+        const hpNow=(A.ref.hp!=null?A.ref.hp:1);
+        if(hpNow-(A.ref._pin||0)>0){                                     // don't waste arrows: enough are already in the air to finish it
+          player.swingCD=0.8*coolMul(); player.arrows--; fireArrow(A.ref, A.kind); } }   // (a Miss frees its share and the next shot flies)
     } else if(A.fist){                                                   // bare-handed: punch for 2 HP
       if(player.punchT>0) player.punchT-=dt;
       if(player.swingCD<=0){ player.swingCD=0.7*coolMul(); player.punchT=0.24; coopPlayerDamage(A.kind, A.ref, 2); }
@@ -2461,8 +2476,8 @@ function waterPlot(bx,by){                         // pour one water over a whol
    TRADE. Any change to either grid clears both accepts. The swap only lands if BOTH packs can hold
    what they're getting; otherwise the whole trade fails and nothing moves. Messages ride the relay:
    {t:'tr', to, from, op}. */
-const TRADEABLE=['guld','wood','arrows','skins','wheat','meat','jerky','meal','seeds','bucket','iron','silver','club','bow','longbow','sword','gaxe','helmet','armor','leggings','chainmail'];
-const TRADE_NAMES={guld:'GULD', wood:'Wood', arrows:'Arrows', skins:'Skins', wheat:'Wheat', meat:'Deer Meat', jerky:'Jerky', meal:'Adv. Meal', seeds:'Seeds', bucket:'Bucket', iron:'Iron Ore', silver:'Silver Ore', club:'Club', bow:'Short Bow', longbow:'Long Bow', sword:'Iron Sword', gaxe:'Gleaming Axe', helmet:'Helmet', armor:'Armor', leggings:'Leggings', chainmail:'Chain Mail'};
+const TRADEABLE=['guld','wood','arrows','skins','wheat','meat','jerky','meal','seeds','bucket','lantern','iron','silver','club','bow','longbow','sword','gaxe','helmet','armor','leggings','chainmail'];
+const TRADE_NAMES={guld:'GULD', wood:'Wood', arrows:'Arrows', skins:'Skins', wheat:'Wheat', meat:'Deer Meat', jerky:'Jerky', meal:'Adv. Meal', seeds:'Seeds', bucket:'Bucket', lantern:'Lantern', iron:'Iron Ore', silver:'Silver Ore', club:'Club', bow:'Short Bow', longbow:'Long Bow', sword:'Iron Sword', gaxe:'Gleaming Axe', helmet:'Helmet', armor:'Armor', leggings:'Leggings', chainmail:'Chain Mail'};
 const trade={ open:false, pid:0, joined:false, mine:{}, theirs:{}, mySeq:0, theirSeq:0,
               myAcc:false, theirAcc:false, myReady:false, theirReady:false, done:false, msg:'', msgT:0 };
 function findRemote(pid){ for(const p of remotePlayers()){ if((p.id|0)===(pid|0)) return p; } return null; }
@@ -2994,6 +3009,44 @@ function updateWeatherFX(dt){                       // EVERY client: fades, rain
       if(d.y>canvas.height){ d.y=-24; d.x=Math.random()*(canvas.width+80); } }
   }
 }
+/* --- LANTERNS: hold one and the night peels back 5 tiles in every direction — bright as noon.
+   Every player sees every lit lantern: the carrier state rides the normal player stream. --- */
+const LANTERN_R = 5*TILE*CELL;                       // 5 tiles of noon in all directions
+function lanternLit(){ return player.tool==='lantern' && player.lantern>0 && !player.dead; }
+function lanternLights(){                            // every lit lantern on THIS map (you + the rest of the party)
+  const L=[];
+  if(!DEDICATED && lanternLit() && scene==='game') L.push({x:player.px, y:player.py});
+  for(const RP of (typeof remotePlayers==='function'?remotePlayers():[])){
+    if(RP.active && !RP.dead && (RP.map||'forest')===mapMode && RP.lt) L.push({x:RP.px, y:RP.py}); }
+  return L;
+}
+let _nightCv=null;
+function drawNight(dark){                            // the night wash — with holes of lantern-light punched through it
+  if(dark<=0.005) return;
+  const W=canvas.width, H=canvas.height;
+  const lights=lanternLights();
+  if(!lights.length){ rect(0,0,W,H,'rgba(13,17,46,'+dark.toFixed(3)+')'); return; }
+  if(!_nightCv || _nightCv.width!==W || _nightCv.height!==H){ _nightCv=document.createElement('canvas'); _nightCv.width=W; _nightCv.height=H; }
+  const g=_nightCv.getContext('2d');
+  g.clearRect(0,0,W,H);
+  g.fillStyle='rgba(13,17,46,'+dark.toFixed(3)+')'; g.fillRect(0,0,W,H);
+  g.globalCompositeOperation='destination-out';      // carve the light out of the dark
+  for(const L of lights){ const s=worldToScreen(L.x, L.y-CELL*0.4), r=LANTERN_R*cam.scale;
+    const rg=g.createRadialGradient(s.x, s.y, r*0.25, s.x, s.y, r);
+    rg.addColorStop(0,'rgba(0,0,0,1)'); rg.addColorStop(0.75,'rgba(0,0,0,0.95)'); rg.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=rg; g.beginPath(); g.arc(s.x, s.y, r, 0, Math.PI*2); g.fill(); }
+  g.globalCompositeOperation='source-over';
+  ctx.drawImage(_nightCv, 0, 0);
+  for(const L of lights){ const s=worldToScreen(L.x, L.y-CELL*0.4), r=LANTERN_R*cam.scale;   // and a warm hearth-glow inside
+    const wg=ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r*0.6);
+    wg.addColorStop(0,'rgba(255,190,90,'+(0.12*dark).toFixed(3)+')'); wg.addColorStop(1,'rgba(255,190,90,0)');
+    ctx.save(); ctx.fillStyle=wg; ctx.beginPath(); ctx.arc(s.x, s.y, r*0.6, 0, Math.PI*2); ctx.fill(); ctx.restore(); }
+}
+function drawLanternCarries(){                       // the little lantern glinting at each carrier's side, day or night
+  for(const L of lanternLights()){ const s=worldToScreen(L.x+CELL*0.5, L.y-CELL*0.5), u=Math.max(6, CELL*cam.scale*0.3);
+    circle(s.x, s.y, u*0.5, 'rgba(255,200,110,0.35)');
+    drawLanternIcon(s.x, s.y, u); }
+}
 /* --- BIRDS: on a clear day, an occasional flock crosses the sky in a loose V.
    Pure local ambience (like turtles and fireflies) — each screen keeps its own sky. --- */
 const flock={ birds:[], next:15+Math.random()*30, life:0 };
@@ -3106,7 +3159,17 @@ function onTapWorld(wx,wy){
     pathToCell(dungeon.forge.x, dungeon.forge.y+1); return; }
   const site2=siteAt(cx,cy);
   if(site2){ siteUI.open=true; siteUI.id=site2.id; buildUI.open=false; shop.msg=''; shop.msgT=0;
-    pathToCell(site2.tx*TILE+1, site2.ty*TILE+BUILDINGS[site2.kind].tiles*TILE); return; }   // tapped a build site — walk over, panel opens
+    if(siteDistCells(site2)>4){                       // stroll to the NEAREST open cell around the site — never across the creek
+      const n2=BUILDINGS[site2.kind].tiles*TILE, x0=site2.tx*TILE, y0=site2.ty*TILE, pcx=cellOf(player.px), pcy=cellOf(player.py);
+      const cands=[];
+      for(let x=x0-2;x<x0+n2+2;x++) for(let y=y0-2;y<y0+n2+2;y++){
+        if(x>=x0&&x<x0+n2&&y>=y0&&y<y0+n2) continue;                    // not ON the footprint
+        if(!inGrid(x,y)||isBlocked(x,y)) continue; cands.push({x,y}); }
+      cands.sort((a,b)=>Math.hypot(a.x-pcx,a.y-pcy)-Math.hypot(b.x-pcx,b.y-pcy));
+      for(const c of cands.slice(0,14)){ const cells=findPath(pcx,pcy,c.x,c.y);
+        if(cells){ player.path=cells.map(cc=>({x:(cc.x+0.5)*CELL,y:(cc.y+0.5)*CELL})); player.targetCell=c; camFollow=true; break; } }
+    }
+    return; }   // tapped a build site — the panel opens; walk over only if actually far
   { const bTap=bldgAtCell(cx,cy); if(bTap){ approachBldg(bTap); return; } }   // tapped a shop/stall → head to ITS door
   player.chopTree=null; player.chopping=false;
   player.goShop=false; player.goButcher=false; player.goAltar=false; player.goCave=false; player.attack=null; player.propTarget=null; player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null;
@@ -3768,9 +3831,10 @@ function updateParticles(dt){
         if(p.fx){ /* another player's arrow — purely visual here; the shooter resolves the damage */ }
         else if(p.toPlayer){ if(p.toRemote){ if(p.tp && typeof netHitRemote==='function') netHitRemote(p.tp,5,false); } else if(!player.dead) playerHit(5, true); }   // goblin arrow → 5 HP to whichever player
         else if(!creatureDead(p.tkind,p.ref)){
+          if(p.ref) p.ref._pin=Math.max(0,(p.ref._pin||0)-(p.dmg||0));                           // this arrow has landed — no longer "in flight"
           if(Math.random()<missChance()){ addFloat('Miss!', p.tx, p.ty-CELL*1.1, '#cfd6de'); }   // the Acc arrows: an arrow can go wide
-          else { coopPlayerDamage(p.tkind, p.ref, rollDmg(p.w||'bow')); spawnMagicHit(p.tx, p.ty, player.magic[p.w||'bow']||0); } } // player arrow → that bow's DMG (+arcane sparks if enchanted)
-        else spawnBlood(p.tx,p.ty,8,false);
+          else { coopPlayerDamage(p.tkind, p.ref, p.dmg!=null?p.dmg:rollDmg(p.w||'bow')); spawnMagicHit(p.tx, p.ty, player.magic[p.w||'bow']||0); } } // player arrow → its pre-rolled DMG (+arcane sparks if enchanted)
+        else { if(p.ref) p.ref._pin=Math.max(0,(p.ref._pin||0)-(p.dmg||0)); spawnBlood(p.tx,p.ty,8,false); }
         particles.splice(i,1); } continue; }
     else if(p.kind==='soul'){ p.t=(p.t||0)+dt;
       if(p.t>=p.delay){ const age=p.t-p.delay;
@@ -4073,7 +4137,7 @@ function drawHeldAxe(px, py, dir, ang, u){
 function drawTree(pt, grow, seedX, seedY){  // oak: brown trunk rectangle + rounded circle canopy
   const g=grow==null?1:Math.max(0.05,grow), u=CELL*cam.scale*g, fx=pt.x, fy=pt.y;
   shadow(fx, fy, u*0.95, u*0.3);
-  const tw=u*0.4, th=u*1.1;
+  const tw=u*0.62, th=u*1.1;   // a thicker, sturdier trunk (canopy unchanged)
   rect(fx-tw/2, fy-th, tw, th, PAL.trunk);                       // sturdy trunk
   const cy=fy-th-u*0.55, R=u*1.05;                               // broad crown — static (no per-frame sway) for performance
   circle(fx-R*0.62, cy+R*0.28, R*0.72, PAL.tree);
@@ -4910,7 +4974,8 @@ function draw(){
   if(mapMode==='forest'){   // the sky's mood washes over the meadow (the dungeon is forever torch-lit)
     const warm=duskWarmth(), dark=nightDarkness();
     if(warm>0.005) rect(0,0,canvas.width,canvas.height,'rgba(255,140,60,'+warm.toFixed(3)+')');
-    if(dark>0.005) rect(0,0,canvas.width,canvas.height,'rgba(13,17,46,'+dark.toFixed(3)+')');
+    drawNight(dark);        // the night wash — pierced by any lit lanterns
+    drawLanternCarries();   // the lanterns themselves, glinting at their carriers' sides
     drawFireflies(dark);    // and the fireflies come out along the banks
     drawBirds();            // a flock riding high over the meadow
     drawWeather();          // rain, gloom and lightning over the meadow
@@ -4995,10 +5060,13 @@ function drawChopTimer(){
   rect(x, y, w, h, PAL.shadow);                                  // empty track
   rect(x, y, w*p, h, PAL.pGreen);                                // fill = progress
   ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(x,y,w,h);
-  const rem=Math.max(0, Math.ceil(CHOP_TIME - player.chopT));    // seconds remaining
+  const lj=cardVal('lumberjack');
+  const rem=Math.max(0, Math.ceil((CHOP_TIME - player.chopT)/(1+lj)));   // REAL seconds remaining — the Lumberjack card shows its work
   ctx.fillStyle=PAL.target; ctx.font='bold '+Math.round(Math.max(11,u*0.42))+'px system-ui, sans-serif';
   ctx.textAlign='center'; ctx.textBaseline='bottom';
   ctx.fillText(rem+'s', cx, y-h*0.5);
+  if(lj>0){ ctx.fillStyle='#8fd07a'; ctx.font='bold '+Math.round(Math.max(9,u*0.3))+'px system-ui, sans-serif';
+    ctx.textBaseline='top'; ctx.fillText('Lumberjack +'+Math.round(lj*100)+'%', cx, y+h*1.6); }   // proof the card is paying
   ctx.restore();
 }
 function drawDrumstick(cx,cy,s){                   // a little chicken drumstick icon
@@ -5147,7 +5215,7 @@ function drawFallingTree(pt, ft){
   const u=CELL*cam.scale, fx=pt.x, fy=pt.y;
   shadow(fx, fy, u*0.95, u*0.3);
   ctx.save(); ctx.translate(fx, fy); ctx.rotate(ft.dir*ft.ang); ctx.translate(-fx, -fy);
-  const tw=u*0.4, th=u*1.1;
+  const tw=u*0.62, th=u*1.1;   // a thicker, sturdier trunk (canopy unchanged)
   rect(fx-tw/2, fy-th, tw, th, PAL.trunk);
   const cy=fy-th-u*0.55, R=u*1.05;
   circle(fx-R*0.62, cy+R*0.28, R*0.72, PAL.tree); circle(fx+R*0.62, cy+R*0.28, R*0.72, PAL.tree);
@@ -5401,6 +5469,7 @@ function shopUILayout(){
 }
 function drawShopItemIcon(key, x, y, s){            // x,y = icon centre
   if(key==='bucket'){ drawBucketIcon(x, y, s*1.4); return; }
+  if(key==='lantern'){ drawLanternIcon(x, y, s*1.5); return; }
   if(key==='longbow'){ drawShopItemIcon('bow', x, y, s*1.18); return; }   // the long bow: same lines, grander sweep
   if(key==='sword'){ beam(x-s*0.32,y+s*0.38, x+s*0.34,y-s*0.36, s*0.11, '#b9c2cc');   // iron blade
     tri([x+s*0.28,y-s*0.42],[x+s*0.44,y-s*0.26],[x+s*0.42,y-s*0.44], '#d7dde4');
@@ -5720,7 +5789,7 @@ const WEAPON_DEFS = [
   { k:'bow',     name:'Short Bow',        dmg:'4-6',   slot:'ranged' },
   { k:'longbow', name:'Long Bow',         dmg:'6-9',   slot:'ranged' },
 ];
-const RESOURCE_DEFS = [ ['guld','GULD'], ['wood','Wood'], ['iron','Iron'], ['silver','Silver'], ['arrows','Arrows'], ['seeds','Seeds'], ['bucket','Bucket'], ['wheat','Wheat'], ['meat','Deer Meat'], ['jerky','Venison Jerky'], ['meal','Adventure Meal'], ['skins','Skins'], ['souls','Souls'], ['witchEye','Eye of the Witch'], ['goblinKey','Goblin Key'] ];
+const RESOURCE_DEFS = [ ['guld','GULD'], ['wood','Wood'], ['iron','Iron'], ['silver','Silver'], ['arrows','Arrows'], ['seeds','Seeds'], ['bucket','Bucket'], ['lantern','Lantern'], ['wheat','Wheat'], ['meat','Deer Meat'], ['jerky','Venison Jerky'], ['meal','Adventure Meal'], ['skins','Skins'], ['souls','Souls'], ['witchEye','Eye of the Witch'], ['goblinKey','Goblin Key'] ];
 const ARMOR_DEFS = [
   { k:'helmet',   name:'Leather Helmet',   prot:1, eq:'eqHelmet'   },
   { k:'armor',    name:'Leather Armor',    prot:2, eq:'eqArmor'    },
@@ -5899,6 +5968,7 @@ function drawCardsTab(M){                              // THE MIND — the brain
 }
 function drawResourceIcon(key, x, y, s){               // small icons for the resources tab
   if(key==='bucket'){ drawBucketIcon(x, y, s*1.2); return; }
+  if(key==='lantern'){ drawLanternIcon(x, y, s*1.3); return; }
   if(key==='wood'){ rect(x-s*0.4,y-s*0.05,s*0.8,s*0.26,PAL.trunk); rect(x-s*0.28,y-s*0.3,s*0.8,s*0.26,PAL.pWood); }
   else if(key==='arrows'){ rect(x-s*0.4,y-s*0.04,s*0.7,s*0.08,PAL.trunk); tri([x+s*0.3,y-s*0.12],[x+s*0.3,y+s*0.12],[x+s*0.48,y],PAL.axeBlade); tri([x-s*0.4,y],[x-s*0.55,y-s*0.12],[x-s*0.55,y+s*0.12],PAL.pMilk); }
   else if(key==='seeds'){ for(const [dx,dy] of [[-0.2,-0.1],[0.05,0.1],[0.25,-0.05],[-0.05,-0.25],[0.15,0.22]]) circle(x+dx*s, y+dy*s, s*0.08, '#e7c877'); }
@@ -6196,7 +6266,7 @@ function menuUIClick(cx,cy){                           // one click handler for 
 }
 /* --- tool bar (screen-space, bottom-centre): axe always; club/bow once crafted --- */
 function toolGroups(){
-  const tools=['axe']; if(player.pickaxe>0) tools.push('pickaxe'); if(player.hoe>0) tools.push('hoe'); if(player.seeds>0) tools.push('seeds'); if(player.bucket>0) tools.push('bucket');
+  const tools=['axe']; if(player.pickaxe>0) tools.push('pickaxe'); if(player.hoe>0) tools.push('hoe'); if(player.seeds>0) tools.push('seeds'); if(player.bucket>0) tools.push('bucket'); if(player.lantern>0) tools.push('lantern');
   const weapons=[];                                                                                 // weapon buttons appear only when EQUIPPED (see the inventory screen)
   if(player.equipMelee && player[player.equipMelee]>0) weapons.push(player.equipMelee);
   if((player.equipRanged==='bow'&&player.bow>0) || (player.equipRanged==='longbow'&&player.longbow>0)) weapons.push(player.equipRanged);
@@ -6254,8 +6324,22 @@ function drawBucketIcon(cx, cy, s){                   // a wooden pail — a blu
     ctx.ellipse(cx, cy-s*0.14, s*0.22, s*0.065, 0, 0, Math.PI*2); ctx.fill(); }
   ctx.restore();
 }
+function drawLanternIcon(cx, cy, s){                  // a little iron lantern with a warm glass heart
+  ctx.save();
+  ctx.strokeStyle='#4a3a2a'; ctx.lineWidth=Math.max(1.5, s*0.05);
+  ctx.beginPath(); ctx.arc(cx, cy-s*0.26, s*0.14, Math.PI, 0); ctx.stroke();          // the carry hoop
+  ctx.fillStyle='#4a3a2a'; ctx.beginPath(); ctx.roundRect(cx-s*0.16, cy-s*0.3, s*0.32, s*0.08, s*0.02); ctx.fill();   // cap
+  ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.roundRect(cx-s*0.14, cy-s*0.22, s*0.28, s*0.36, s*0.04); ctx.fill(); // the warm glass
+  ctx.fillStyle='#ffb347'; ctx.beginPath(); ctx.ellipse(cx, cy-s*0.02, s*0.06, s*0.09, 0, 0, Math.PI*2); ctx.fill(); // the flame
+  ctx.strokeStyle='#4a3a2a'; ctx.lineWidth=Math.max(1.2, s*0.035);
+  ctx.strokeRect(cx-s*0.14, cy-s*0.22, s*0.28, s*0.36);                                // iron frame
+  ctx.beginPath(); ctx.moveTo(cx, cy-s*0.22); ctx.lineTo(cx, cy+s*0.14); ctx.stroke();
+  ctx.fillStyle='#4a3a2a'; ctx.beginPath(); ctx.roundRect(cx-s*0.16, cy+s*0.14, s*0.32, s*0.06, s*0.02); ctx.fill(); // base
+  ctx.restore();
+}
 function drawToolIcon(key, cx, cy, s){
   if(key==='bucket'){ drawBucketIcon(cx, cy, s); return; }
+  if(key==='lantern'){ drawLanternIcon(cx, cy, s*0.9); return; }
   if(key==='build'){                                  // a mallet over a fresh plank
     rect(cx-s*0.3, cy+s*0.16, s*0.6, s*0.1, PAL.plankHi);
     beam(cx-s*0.16, cy+s*0.1, cx+s*0.12, cy-s*0.16, s*0.055, PAL.trunk);
@@ -6769,7 +6853,7 @@ function resetPlayerStats(){                         // fresh start: full HP, st
   if(player.level==null){ player.level=1; player.xp=0; }   // level/XP are identity — they survive a death; only a NEW character resets them (startAsRace)
   if(player.cards==null) player.cards={};                  // cards are identity too — a death forgets nothing
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
-  player.bucket=0; player.water=0;
+  player.bucket=0; player.water=0; player.lantern=0;
   if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
   player.equipMelee=null; player.equipRanged='bow';   // fresh hero sets out with a short bow equipped
@@ -7143,7 +7227,8 @@ function packSelf(){ return { id:net.myId, active:!DEDICATED, map:mapMode, px:pl
   tool:player.tool, punchT:player.punchT||0, chopping:player.chopping?1:0, dead:player.dead?1:0, hp:player.hp, hpMax:player.hpMax,
   mw:Math.max(player.magic.club||0, player.magic.bow||0, player.magic.longbow||0, player.magic.sword||0, player.magic.gaxe||0),
   ma:Math.max(player.magic.helmet||0, player.magic.armor||0, player.magic.leggings||0, player.magic.chainmail||0),
-  wh:player.helmet&&player.eqHelmet?1:0, wa:player.armor&&player.eqArmor?1:0, wl:player.leggings&&player.eqLeggings?1:0, wc:player.chainmail&&player.eqChainmail?1:0 }; }
+  wh:player.helmet&&player.eqHelmet?1:0, wa:player.armor&&player.eqArmor?1:0, wl:player.leggings&&player.eqLeggings?1:0, wc:player.chainmail&&player.eqChainmail?1:0,
+  lt:lanternLit()?1:0 }; }
 function buildMe(){ const p=packSelf(); p.t='me'; return p; }
 function buildSnap(){
   // Big-world diet: players+goblins ride every snap (20 Hz); deer every other snap (10 Hz);
@@ -7294,7 +7379,7 @@ function netOnData(m, fromClient){
     if((m.map||'forest')===mapMode) netApplySnap(m); } }
   else if(m.t==='me'){ if(net.mode==='host' && fromClient){ const P=fromClient.p;
     P.active=true; P.map=m.map||'forest'; P.px=m.px; P.py=m.py; P.race=m.race; P.face=m.face; P.tool=m.tool; P.punchT=m.punchT;
-    P.chopping=m.chopping; P.dead=!!m.dead; P.hp=m.hp; P.hpMax=m.hpMax; P.mw=m.mw||0; P.ma=m.ma||0; P.wh=m.wh||0; P.wa=m.wa||0; P.wl=m.wl||0; P.wc=m.wc||0; } }
+    P.chopping=m.chopping; P.dead=!!m.dead; P.hp=m.hp; P.hpMax=m.hpMax; P.mw=m.mw||0; P.ma=m.ma||0; P.wh=m.wh||0; P.wa=m.wa||0; P.wl=m.wl||0; P.wc=m.wc||0; P.lt=m.lt||0; } }
   else if(m.t==='dmg'){ if(net.mode==='host'){ const f=findByNid(m.nid); if(f && !creatureDead(f.kind,f.cr)) damageCreature(f.kind, f.cr, m.amount, true); } }
   else if(m.t==='hit'){ if(!player.dead) playerHit(m.amount, true, m.ignoreArmor); }
   else if(m.t==='afx'){ addParticle({ kind:m.bolt?'bolt':'arrow', x:m.x0, y:m.y0, x0:m.x0, y0:m.y0, tx:m.tx, ty:m.ty, t:0, dur:m.dur, life:99, max:99,
