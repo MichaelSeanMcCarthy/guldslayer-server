@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · c';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · d';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -580,6 +580,7 @@ function applyMapState(s, withPlayer){
   campfire=s.campfire;
   henge.placed=s.placed.henge; cave.placed=s.placed.cave;
   if(s.dg){ dungeon.exit=s.dg.exit; dungeon.forge=s.dg.forge; dungeon.throne=s.dg.throne; }   // each world keeps its own landmarks
+  invalidateWalk();                                     // a different world means different ground
   pendingGoblins.length=0; pendingDeer.length=0;
   if(withPlayer){                                       // travel: also reset the hero's action state
     player.path=[]; player.targetCell=null;
@@ -678,6 +679,7 @@ function makeRat(x,y){ return { x,y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'rat
 function makeKing(x,y){ return { x,y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'king', size:2, faceLeft:false, face:'S',
   hp:BOSS_HP*2, st:'throne', gpath:[], repathG:0, atkCD:0, boltCD:2, sumCD:6, aggro:false, hopAmt:0 }; }
 function generateDungeon(){
+  invalidateWalk();
   const rng=mulberry32((worldSeed ^ 0x5bd1e995)>>>0);
   world.terrain=new Uint8Array(GRID*GRID).fill(1);        // solid rock everywhere…
   world.moist=new Uint8Array(GRID*GRID);
@@ -776,6 +778,7 @@ function makeBeast(x,y,beast){                        // wolves & bears ride the
     wanderCD:Math.random()*2, hopAmt:0, jumpCD:Math.random()*2, jT:null, jDur:0.45, bob:Math.random()*6.28, phase:Math.random()*6.28 };
 }
 function generateDen(i){
+  invalidateWalk();
   const rec=denRecFor('den'+i);
   const rng=mulberry32((worldSeed ^ (0xA5F00D + i*7919))>>>0);
   world.terrain=new Uint8Array(GRID*GRID).fill(1);      // solid rock…
@@ -1003,13 +1006,28 @@ function placeShopAt(sx, sy){
 const TGRD = GRID/TILE;
 let _tpG=null,_tpPrev=null,_tpMark=null,_tpGen=0;
 const gateAtCell=(x,y)=> !!(world.gateBlock && world.gateBlock.has(gi(x,y)));   // a gate: open ground for players, a wall for creatures
+/* --- cached tile walkability: three 100x100 bitmaps (players / creatures / deer), rebuilt at most
+       once a second and on every map switch. Pathfinding hammers this millions of times a minute —
+       the cache turns each probe into one array read. --- */
+let _walkGrids=null, _walkStamp=-1;
+function invalidateWalk(){ _walkStamp=-1; }
+function rebuildWalkGrids(){
+  const N=TGRD*TGRD;
+  if(!_walkGrids) _walkGrids={ p:new Uint8Array(N), c:new Uint8Array(N), d:new Uint8Array(N) };
+  const P=_walkGrids.p, C=_walkGrids.c, D=_walkGrids.d;
+  for(let ty=0;ty<TGRD;ty++) for(let tx=0;tx<TGRD;tx++){
+    const x0=tx*TILE, y0=ty*TILE; let pOK=1, dOK=1;
+    for(let dy=0;dy<TILE && (pOK||dOK);dy++) for(let dx=0;dx<TILE;dx++){ const x=x0+dx, y=y0+dy;
+      if(isBlocked(x,y)){ pOK=0; if(!isTree(x,y)){ dOK=0; break; } } }
+    const gated=gateAtCell(x0+1, y0+1)?1:0, k=ty*TGRD+tx;
+    P[k]=pOK; C[k]=(pOK&&!gated)?1:0; D[k]=(dOK&&!gated)?1:0;   // creatures never pass a gate; deer also slip between trunks
+  }
+}
 function tileWalkable(tx,ty,cr){
   if(tx<0||ty<0||tx>=TGRD||ty>=TGRD) return false;
-  if(cr && gateAtCell(tx*TILE+1, ty*TILE+1)) return false;   // creatures never pass a gate
-  const x0=tx*TILE, y0=ty*TILE, deer=cr==='deer';            // deer slip between the trunks — trees never bar their way
-  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const x=x0+dx, y=y0+dy;
-    if(deer ? (!isTree(x,y) && isBlocked(x,y)) : isBlocked(x,y)) return false; }
-  return true;
+  const st=(animT|0); if(_walkStamp!==st || !_walkGrids){ _walkStamp=st; rebuildWalkGrids(); }
+  const k=ty*TGRD+tx;
+  return !!(cr==='deer' ? _walkGrids.d[k] : cr ? _walkGrids.c[k] : _walkGrids.p[k]);
 }
 function findPathTiles(scx,scy,tcx,tcy,cr,maxExpand){
   const N=TGRD*TGRD;
@@ -1370,11 +1388,11 @@ function fireGoblinArrow(g, T){            // loose an arrow at a player (5 HP o
 }
 let _gobPathBudget=0, _gobPathFrame=-1;              // goblins share one per-frame pathfinding allowance, like the deer
 function goblinPathTo(g, cx, cy, size){
-  if(_gobPathFrame!==animT){ _gobPathFrame=animT; _gobPathBudget=4; }
+  if(_gobPathFrame!==animT){ _gobPathFrame=animT; _gobPathBudget=6; }
   if(_gobPathBudget<=0) return false;                // spent — this goblin waits a frame
   _gobPathBudget--;
   const dest=nearestOpen(cx,cy); if(!dest) return false;
-  const cells=findPath(cellOf(g.px), cellOf(g.py), dest.x, dest.y, size||1, true, 1500); if(!cells) return false;
+  const cells=findPath(cellOf(g.px), cellOf(g.py), dest.x, dest.y, size||1, true, 3000); if(!cells) return false;
   g.gpath=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL})); return true;
 }
 /* --- goblins are wary of town: unless a player has drawn their blood (aggro), they keep 15 tiles clear of the shops --- */
@@ -1729,17 +1747,26 @@ function updateRat(rt, dt){
     if(rt.wanderCD<=0){ if(goblinWander(rt, 2, 5)) rt.wanderCD=1.5+Math.random()*3; else rt.wanderCD=1; }
   }
 }
+let _lodSeq=0;                                       // AI level-of-detail: creatures far from every player tick 1 frame in 3, at 3x dt
+function lodSkip(e, px, py){
+  const T=nearestFoe(px, py);
+  if(Math.hypot(cellOf(px)-cellOf(T.px), cellOf(py)-cellOf(T.py))<=30) return 0;   // someone's close — full rate
+  if(e._li==null) e._li=(_lodSeq++);
+  return ((((animT*30)|0)+e._li)%3) ? 1 : 2;         // 1 = skip this frame · 2 = run with tripled dt
+}
 function updateGoblins(dt){
   for(const g of goblins){
     if(g.dead){ g.deadT=(g.deadT||0)+dt; if(g.deadT>=180) g.gone=true; continue; }   // corpse -> bones(60s) -> gone(180s)
-    tickSwing(g, dt);                                                // advance an in-progress club swing (lands the hit mid-swing)
-    if(g.kind==='witch'){ updateWitch(g, dt); continue; }            // the goblin witch roams & raises the dead
-    if(g.kind==='skeleton'||g.kind==='bigskel'){ updateSkeleton(g, dt); continue; }   // skeletons (and the king's bone-giants) hunt the player
-    if(g.kind==='king'){ updateKing(g, dt); continue; }              // the Goblin King holds his court
-    if(g.kind==='bat'){ updateBat(g, dt); continue; }                // cave bats flutter and swoop
-    if(g.kind==='rat'){ updateRat(g, dt); continue; }                // giant rats scurry and bite
-    if(g.kind==='archer'){ updateArcher(g, dt); continue; }          // archers shoot from range
-    updateMelee(g, dt);                                              // claws (1 DMG) & boss club (8 DMG) chase & strike
+    let gdt=dt;
+    if(!g.aggro && g.kind!=='king'){ const sk=lodSkip(g, g.px, g.py); if(sk===1) continue; if(sk===2) gdt=dt*3; }
+    tickSwing(g, gdt);                                               // advance an in-progress club swing (lands the hit mid-swing)
+    if(g.kind==='witch'){ updateWitch(g, gdt); continue; }           // the goblin witch roams & raises the dead
+    if(g.kind==='skeleton'||g.kind==='bigskel'){ updateSkeleton(g, gdt); continue; }   // skeletons (and the king's bone-giants) hunt the player
+    if(g.kind==='king'){ updateKing(g, gdt); continue; }             // the Goblin King holds his court
+    if(g.kind==='bat'){ updateBat(g, gdt); continue; }               // cave bats flutter and swoop
+    if(g.kind==='rat'){ updateRat(g, gdt); continue; }               // giant rats scurry and bite
+    if(g.kind==='archer'){ updateArcher(g, gdt); continue; }         // archers shoot from range
+    updateMelee(g, gdt);                                             // claws (1 DMG) & boss club (8 DMG) chase & strike
   }
   for(const g of goblins){ if(!g.dead && !g.gone && g.kind!=='boss') separate(g, dt); }      // goblins avoid sharing a tile
   if(pendingGoblins.length){ for(const ng of pendingGoblins) goblins.push(ng); pendingGoblins.length=0; }   // add newly-raised skeletons
@@ -2024,6 +2051,7 @@ function placeBridgeTileAt(tx, ty, vert){           // lay planks across one who
    A gate swings for players but never for creatures. A well fills buckets for the crops. --- */
 const FENCE_HP=30;
 function rebuildStructSets(){
+  invalidateWalk();
   world.fenceBlock=new Set(); world.gateBlock=new Set(); world.wellBlock=new Set();
   const fill=(set,tx,ty)=>{ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) set.add(gi(tx*TILE+dx, ty*TILE+dy)); };
   for(const f of (world.fences||[])) fill(world.fenceBlock, f.tx, f.ty);
@@ -2547,6 +2575,7 @@ function updateChop(dt){
     player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
 }
 function fellTree(tree, fromWX, fromNet){            // topple a tree away from `fromWX` — EVERY player sees it fall
+  invalidateWalk();
   const dir = fromWX < (tree.x+1.5)*CELL ? 1 : -1;
   fallingTrees.push({ x:tree.x, y:tree.y, ang:0, dir, t:0 });
   const i=world.trees.indexOf(tree); if(i>=0) world.trees.splice(i,1);
@@ -3553,7 +3582,7 @@ function deerPathTo(d, cx, cy){                       // a starving herd can nev
   if(_aiPathFrame!==animT){ _aiPathFrame=animT; _aiPathBudget=6; }    // a fresh frame refills the allowance
   if(_aiPathBudget<=0) return false;                  // spent — this deer simply waits a frame
   _aiPathBudget--;
-  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, 'deer', 2000);   // capped flood; deer paths pass through trees
+  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, 'deer', 3500);   // capped flood; deer paths pass through trees
   if(!cells) return false;
   d.path=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL}));
   return true;
@@ -3819,6 +3848,7 @@ function buckMate(buck, dt){
 }
 function updateDeer(d, dt){
   if(d.dead){ d.deadT=(d.deadT||0)+dt; if(d.deadT>=DEER_FRESH_T+120) d.gone=true; return; }  // corpse (180s fresh) -> bones -> gone
+  if(d.state!=='flee' && !d.spookRun){ const sk=lodSkip(d, d.px, d.py); if(sk===1) return; if(sk===2) dt*=3; }   // far herds graze in slow motion
   d.hunger += dt*2;   // deer and bucks get hungry twice as fast
   // --- lifecycle ticks ---
   if(d.fawn){ d.age=(d.age||0)+dt; if(d.age>=300){ matureFawn(d); } }            // fawn -> doe after 5 min
