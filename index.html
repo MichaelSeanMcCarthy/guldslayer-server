@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · p';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · a';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -900,8 +900,9 @@ const gateAtCell=(x,y)=> !!(world.gateBlock && world.gateBlock.has(gi(x,y)));   
 function tileWalkable(tx,ty,cr){
   if(tx<0||ty<0||tx>=TGRD||ty>=TGRD) return false;
   if(cr && gateAtCell(tx*TILE+1, ty*TILE+1)) return false;   // creatures never pass a gate
-  const x0=tx*TILE, y0=ty*TILE;
-  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(isBlocked(x0+dx,y0+dy)) return false;
+  const x0=tx*TILE, y0=ty*TILE, deer=cr==='deer';            // deer slip between the trunks — trees never bar their way
+  for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++){ const x=x0+dx, y=y0+dy;
+    if(deer ? (!isTree(x,y) && isBlocked(x,y)) : isBlocked(x,y)) return false; }
   return true;
 }
 function findPathTiles(scx,scy,tcx,tcy,cr,maxExpand){
@@ -3288,7 +3289,7 @@ function deerPathTo(d, cx, cy){                       // a starving herd can nev
   if(_aiPathFrame!==animT){ _aiPathFrame=animT; _aiPathBudget=6; }    // a fresh frame refills the allowance
   if(_aiPathBudget<=0) return false;                  // spent — this deer simply waits a frame
   _aiPathBudget--;
-  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, true, 2000);   // capped flood: a doomed search bails early
+  const cells=findPath(cellOf(d.px),cellOf(d.py),cx,cy,d.size||1, 'deer', 2000);   // capped flood; deer paths pass through trees
   if(!cells) return false;
   d.path=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL}));
   return true;
@@ -3636,7 +3637,7 @@ function updateDeer(d, dt){
     const dur = d.fawn ? NURSE_TIME : EAT_TIME;
     if(d.eatT >= dur){
       if(!d.fawn){ eatBush(d.targetBush); d.targetBush=null; }           // fawns don't consume bushes
-      if(d.antlers){ d.eatCount=(d.eatCount||0)+1; if(d.eatCount%3===0 && deerRoomToBreed()) d.wantMate=true; }  // every 3rd meal a buck seeks a mate — if the land can feed another mouth
+      if(d.antlers){ d.eatCount=(d.eatCount||0)+1; if(deerRoomToBreed()) d.wantMate=true; }  // EVERY meal stirs a buck to seek a mate — if the land can feed another mouth
       d.hunger=0; deerDecide(d, false);
     }
   }
