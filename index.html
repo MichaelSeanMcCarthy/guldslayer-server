@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · n';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · o';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3013,7 +3013,7 @@ function updateWeatherFX(dt){                       // EVERY client: fades, rain
 }
 /* --- LANTERNS: hold one and the night peels back 5 tiles in every direction — bright as noon.
    Every player sees every lit lantern: the carrier state rides the normal player stream. --- */
-const LANTERN_R = 5*TILE*CELL;                       // 5 tiles of noon in all directions
+const LANTERN_R = 4*TILE*CELL;                       // light reaches 4 tiles out, brightest at the carrier's side
 function lanternLit(){ return player.tool==='lantern' && player.lantern>0 && !player.dead; }
 function lanternLights(){                            // every lit lantern on THIS map (you + the rest of the party)
   const L=[];
@@ -3034,8 +3034,9 @@ function drawNight(dark){                            // the night wash — with 
   g.fillStyle='rgba(13,17,46,'+dark.toFixed(3)+')'; g.fillRect(0,0,W,H);
   g.globalCompositeOperation='destination-out';      // carve the light out of the dark
   for(const L of lights){ const s=worldToScreen(L.x, L.y-CELL*0.4), r=LANTERN_R*cam.scale;
-    const rg=g.createRadialGradient(s.x, s.y, r*0.25, s.x, s.y, r);
-    rg.addColorStop(0,'rgba(0,0,0,1)'); rg.addColorStop(0.75,'rgba(0,0,0,0.95)'); rg.addColorStop(1,'rgba(0,0,0,0)');
+    const rg=g.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);          // brightest right at the carrier…
+    rg.addColorStop(0,'rgba(0,0,0,1)'); rg.addColorStop(0.3,'rgba(0,0,0,0.92)');
+    rg.addColorStop(0.65,'rgba(0,0,0,0.55)'); rg.addColorStop(1,'rgba(0,0,0,0)');   // …fading to nothing at tile 4
     g.fillStyle=rg; g.beginPath(); g.arc(s.x, s.y, r, 0, Math.PI*2); g.fill(); }
   g.globalCompositeOperation='source-over';
   ctx.drawImage(_nightCv, 0, 0);
