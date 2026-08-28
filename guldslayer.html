@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · b';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · c';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1368,9 +1368,13 @@ function fireGoblinArrow(g, T){            // loose an arrow at a player (5 HP o
     ang:Math.atan2(ty-sy, tx-sx), toPlayer:true, toRemote:(T!==player), tp:(T!==player?T:null) });
   if(typeof netSendArrowFX==='function') netSendArrowFX(sx, sy, tx, ty, dur);   // goblin arrows are visible to the other player too
 }
+let _gobPathBudget=0, _gobPathFrame=-1;              // goblins share one per-frame pathfinding allowance, like the deer
 function goblinPathTo(g, cx, cy, size){
+  if(_gobPathFrame!==animT){ _gobPathFrame=animT; _gobPathBudget=4; }
+  if(_gobPathBudget<=0) return false;                // spent — this goblin waits a frame
+  _gobPathBudget--;
   const dest=nearestOpen(cx,cy); if(!dest) return false;
-  const cells=findPath(cellOf(g.px), cellOf(g.py), dest.x, dest.y, size||1, true); if(!cells) return false;
+  const cells=findPath(cellOf(g.px), cellOf(g.py), dest.x, dest.y, size||1, true, 1500); if(!cells) return false;
   g.gpath=cells.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL})); return true;
 }
 /* --- goblins are wary of town: unless a player has drawn their blood (aggro), they keep 15 tiles clear of the shops --- */
@@ -1423,7 +1427,7 @@ function followLeader(g, dt){               // a claw trails its bow goblin, sta
   const d=Math.hypot(cellOf(g.px)-cellOf(L.px), cellOf(g.py)-cellOf(L.py));
   if(d<=5){ g.gpath=[]; goblinDance(g, dt); return; }   // close enough — mill near the leader
   g.hopAmt=0; g.repathG=(g.repathG||0)-dt;
-  if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(L.px), cellOf(L.py), 1); g.repathG=0.4; }
+  if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(L.px), cellOf(L.py), 1); g.repathG=0.7+Math.random()*0.3; }   // a lazy trail needs no eager repathing
   goblinMove(g, GOB_SPEED, dt);
 }
 // claws (1 DMG) & the club-swinging boss (8 DMG, slower than the player) chase & strike within 8 tiles
@@ -1488,7 +1492,7 @@ function updateMelee(g, dt){
           return; } }
     }
     g.repathG=(g.repathG||0)-dt;
-    if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), boss?3:(g.size||1)); g.repathG=0.4; }
+    if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), boss?3:(g.size||1)); g.repathG=0.55; }
     goblinMove(g, speed, dt);
   }
 }
@@ -1595,7 +1599,7 @@ function updateWitch(w, dt){
       let tx=Math.max(1,Math.min(GRID-2, cellOf(w.px)+Math.round(Math.cos(a)*18)));
       let ty=Math.max(1,Math.min(GRID-2, cellOf(w.py)+Math.round(Math.sin(a)*18)));
       if(!goblinPathTo(w, tx, ty, 1)) goblinWander(w, 6, 12);
-      w.repathG=0.3;
+      w.repathG=0.5;
     }
     goblinMove(w, WITCH_SPEED, dt); return;
   }
