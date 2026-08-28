@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-27 · o';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-27 · p';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1649,7 +1649,8 @@ function moveTo(wx, wy){
   camFollow=true;                                   // setting out — the camera falls back in behind the hero
 }
 function approachBldg(b){                           // walk to THIS building's front door, then open it
-  player.tool=null; player.chopTree=null; player.chopping=false; player.attack=null; player.propTarget=null; player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null;
+  if(player.tool!=='lantern') player.tool=null;     // a lit lantern stays lit through shopping
+  player.chopTree=null; player.chopping=false; player.attack=null; player.propTarget=null; player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null;
   const door=bldgDoorCell(b), scx=cellOf(player.px), scy=cellOf(player.py);
   player._goB=b;
   if(Math.abs(scx-door.x)<=1 && Math.abs(scy-door.y)<=1){ openBldg(b); return; }  // already at the step
@@ -2048,7 +2049,8 @@ function altarClick(cx,cy){
 }
 function approachAltar(){                            // tap the altar → walk into the circle, then commune
   player.goAltar=true; player.goShop=false; player.goStall=false; player.goArmor=false;
-  player.tool=null; player.chopTree=null; player.chopping=false; player.attack=null; player.propTarget=null;
+  if(player.tool!=='lantern') player.tool=null;     // the lantern keeps burning at the altar too
+  player.chopTree=null; player.chopping=false; player.attack=null; player.propTarget=null;
   player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null;
   pathToCell(henge.altar.x, henge.altar.y);
 }
@@ -2774,15 +2776,27 @@ function updateBags(dt){                            // the 10-minute dust clock 
       if(bagUI.open&&bagUI.id===b.id) bagUI.open=false;
       if(!DEDICATED) addFloat('A forgotten bag crumbles to dust…', (b.x+0.5)*CELL, (b.y-0.3)*CELL, '#b3a084'); } }
 }
-function drawBag(b){                                // a little dropped sack, fading as the dust clock runs down
+function drawBag(b){                                // one item lies in the open; two or more become a pouch
   const s=worldToScreen((b.x+0.5)*CELL, (b.y+0.5)*CELL), u=Math.max(8, CELL*cam.scale*0.5);
   ctx.save();
   if(b.age>BAG_DUST_SECS-60) ctx.globalAlpha=Math.max(0.3, 1-(b.age-(BAG_DUST_SECS-60))/60*0.7);
-  shadow(s.x, s.y, u*0.4, u*0.14);
-  ctx.fillStyle='#8a5a34'; ctx.beginPath(); ctx.roundRect(s.x-u*0.36, s.y-u*0.62, u*0.72, u*0.55, u*0.14); ctx.fill();
-  ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(s.x-u*0.36, s.y-u*0.72, u*0.72, u*0.26, u*0.12); ctx.fill();
-  beam(s.x-u*0.16, s.y-u*0.74, s.x+u*0.16, s.y-u*0.74, u*0.09, '#4a2f18');   // the tie
-  circle(s.x, s.y-u*0.34, u*0.08, '#e7c877');
+  const solo=bagSolo(b);
+  if(solo==='lantern'){                              // a set-down lantern stands upright, still burning
+    shadow(s.x, s.y, u*0.5, u*0.16);
+    circle(s.x, s.y-u*0.35, u*0.55, 'rgba(255,200,110,0.28)');       // its warm halo
+    drawLanternIcon(s.x, s.y-u*0.35, u*0.85);
+  } else if(solo){                                   // a single dropped thing shows as ITSELF
+    shadow(s.x, s.y, u*0.42, u*0.14);
+    const WEAPONISH=['sword','club','gaxe','bow','longbow','helmet','armor','chainmail','leggings','bucket','packM','packL'];
+    if(WEAPONISH.includes(solo)) drawShopItemIcon(solo, s.x, s.y-u*0.3, u*0.55);
+    else drawResourceIcon(solo, s.x, s.y-u*0.3, u*0.62);
+  } else {                                           // the pouch: more than one thing lies here
+    shadow(s.x, s.y, u*0.4, u*0.14);
+    ctx.fillStyle='#8a5a34'; ctx.beginPath(); ctx.roundRect(s.x-u*0.36, s.y-u*0.62, u*0.72, u*0.55, u*0.14); ctx.fill();
+    ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(s.x-u*0.36, s.y-u*0.72, u*0.72, u*0.26, u*0.12); ctx.fill();
+    beam(s.x-u*0.16, s.y-u*0.74, s.x+u*0.16, s.y-u*0.74, u*0.09, '#4a2f18');   // the tie
+    circle(s.x, s.y-u*0.34, u*0.08, '#e7c877');
+  }
   ctx.restore();
 }
 function drawWell(s){                               // a stone ring, two posts and a little gabled roof
@@ -3020,7 +3034,14 @@ function lanternLights(){                            // every lit lantern on THI
   if(!DEDICATED && lanternLit() && scene==='game') L.push({x:player.px, y:player.py});
   for(const RP of (typeof remotePlayers==='function'?remotePlayers():[])){
     if(RP.active && !RP.dead && (RP.map||'forest')===mapMode && RP.lt) L.push({x:RP.px, y:RP.py}); }
+  for(const b of (world.bags||[])){                  // a lantern set down alone keeps burning where it stands
+    if(bagSolo(b)==='lantern') L.push({x:(b.x+0.5)*CELL, y:(b.y+0.5)*CELL, bag:true}); }
   return L;
+}
+function bagSolo(b){                                 // the bag's ONE item key when exactly one thing lies here — else null
+  let key=null, total=0;
+  for(const k in (b.items||{})){ const n=b.items[k]|0; if(n>0){ total+=n; key=k; } }
+  return total===1 ? key : null;                     // two or more (even of the same thing) become a pouch
 }
 let _nightCv=null;
 function drawNight(dark){                            // the night wash — with holes of lantern-light punched through it
@@ -3046,7 +3067,8 @@ function drawNight(dark){                            // the night wash — with 
     ctx.save(); ctx.fillStyle=wg; ctx.beginPath(); ctx.arc(s.x, s.y, r*0.6, 0, Math.PI*2); ctx.fill(); ctx.restore(); }
 }
 function drawLanternCarries(){                       // the little lantern glinting at each carrier's side, day or night
-  for(const L of lanternLights()){ const s=worldToScreen(L.x+CELL*0.5, L.y-CELL*0.5), u=Math.max(6, CELL*cam.scale*0.3);
+  for(const L of lanternLights()){ if(L.bag) continue;   // a set-down lantern is already drawn on the ground
+    const s=worldToScreen(L.x+CELL*0.5, L.y-CELL*0.5), u=Math.max(6, CELL*cam.scale*0.3);
     circle(s.x, s.y, u*0.5, 'rgba(255,200,110,0.35)');
     drawLanternIcon(s.x, s.y, u); }
 }
@@ -4151,7 +4173,7 @@ function drawHeldAxe(px, py, dir, ang, u){
 function drawTree(pt, grow, seedX, seedY){  // oak: brown trunk rectangle + rounded circle canopy
   const g=grow==null?1:Math.max(0.05,grow), u=CELL*cam.scale*g, fx=pt.x, fy=pt.y;
   shadow(fx, fy, u*0.95, u*0.3);
-  const tw=u*0.62, th=u*1.1;   // a thicker, sturdier trunk (canopy unchanged)
+  const tw=u*1.24, th=u*1.1;   // a THICK trunk — reads as "you cannot walk through this tile"
   rect(fx-tw/2, fy-th, tw, th, PAL.trunk);                       // sturdy trunk
   const cy=fy-th-u*0.55, R=u*1.05;                               // broad crown — static (no per-frame sway) for performance
   circle(fx-R*0.62, cy+R*0.28, R*0.72, PAL.tree);
@@ -5229,7 +5251,7 @@ function drawFallingTree(pt, ft){
   const u=CELL*cam.scale, fx=pt.x, fy=pt.y;
   shadow(fx, fy, u*0.95, u*0.3);
   ctx.save(); ctx.translate(fx, fy); ctx.rotate(ft.dir*ft.ang); ctx.translate(-fx, -fy);
-  const tw=u*0.62, th=u*1.1;   // a thicker, sturdier trunk (canopy unchanged)
+  const tw=u*1.24, th=u*1.1;   // a THICK trunk — reads as "you cannot walk through this tile"
   rect(fx-tw/2, fy-th, tw, th, PAL.trunk);
   const cy=fy-th-u*0.55, R=u*1.05;
   circle(fx-R*0.62, cy+R*0.28, R*0.72, PAL.tree); circle(fx+R*0.62, cy+R*0.28, R*0.72, PAL.tree);
