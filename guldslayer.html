@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · a';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · b';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -345,6 +345,7 @@ const isBlocked = (x,y)=> { if(!inGrid(x,y)) return true;
   if(bldgAtCell(x,y)) return true;                                            // any built shop/stall blocks its cells
   if(world.shopBlock&&world.shopBlock.has(gi(x,y))) return true;
   if(world.hengeBlock&&world.hengeBlock.has(gi(x,y))) return true;   // standing stones & the altar
+  if(world.denBlock&&world.denBlock.has(gi(x,y))) return true;       // the wild dens' rocky crags
   if(world.caveBlock&&world.caveBlock.has(gi(x,y))) return true;     // the cave's rock walls (and its door, while locked)
   if(world.rockBlock&&world.rockBlock.has(gi(x,y))) return true;     // unmined ore nodes
   const v=world.terrain[gi(x,y)]; return v===1||v===2||v===4; };
@@ -485,6 +486,7 @@ function generateWorld(){
   buildRoad();
   placeHenge();
   placeCave();
+  placeDens();
 }
 /* --- the goblin cave: a rocky den in the northwest with a locked door.
        Only the Goblin Key (won from the boss) opens it — and once one player turns
@@ -512,6 +514,38 @@ function placeCave(){
   cave.door={x:s.x0+2, y:s.y0+4};                                     // a great door in the boulder's south face
   for(let y=s.y0;y<s.y0+5;y++)for(let x=s.x0;x<s.x0+5;x++) world.caveBlock.add(gi(x,y));   // one solid 5x5 boulder
 }
+function placeDens(){                                   // three wild cave mouths scattered about the map: 2 wolf, 1 bear
+  world.dens=[]; world.denBlock=new Set();
+  const rng=mulberry32((worldSeed ^ 0x9e3779b9)>>>0);
+  const ok=(x0,y0)=>{ for(let y=y0-1;y<y0+4;y++)for(let x=x0-1;x<x0+4;x++){
+    if(!inGrid(x,y) || isWater(x,y) || (world.bridgeSet&&world.bridgeSet.has(gi(x,y)))) return false;
+    if(world.caveBlock&&world.caveBlock.has(gi(x,y))) return false;
+    if(world.hengeBlock&&world.hengeBlock.has(gi(x,y))) return false; } return true; };
+  const kinds=['wolf','wolf','bear'];
+  for(let i=0;i<3;i++){
+    let s=null;
+    for(let t=0;t<600 && !s;t++){
+      const x0=6+((rng()*(GRID-14))|0), y0=6+((rng()*(GRID-14))|0);
+      if(!ok(x0,y0)) continue;
+      if(world.dens.some(d=>Math.hypot(d.x-x0,d.y-y0)<40)) continue;      // spread the dens well apart
+      s={x0,y0};
+    }
+    if(!s) continue;
+    // clear the hillside: trees & bushes off the 3x3 footprint (plus a rim)
+    for(let y=s.y0-1;y<s.y0+4;y++)for(let x=s.x0-1;x<s.x0+4;x++){ if(!inGrid(x,y)) continue;
+      for(let ti=world.trees.length-1;ti>=0;ti--){ const t=world.trees[ti];
+        if(x>=t.x&&x<t.x+TILE&&y>=t.y&&y<t.y+TILE){
+          for(let dy=0;dy<TILE;dy++)for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0;
+          world.trees.splice(ti,1); } }
+      for(let bi=world.bushes.length-1;bi>=0;bi--){ if(world.bushes[bi].x===x&&world.bushes[bi].y===y) world.bushes.splice(bi,1); }
+      if(world.terrain[gi(x,y)]===1) world.terrain[gi(x,y)]=0;
+    }
+    const door={x:s.x0+1, y:s.y0+2};
+    for(let y=s.y0;y<s.y0+3;y++)for(let x=s.x0;x<s.x0+3;x++) world.denBlock.add(gi(x,y));   // a solid 3x3 crag…
+    world.denBlock.delete(gi(door.x, door.y));                                              // …with an open mouth at the south
+    world.dens.push({ id:'den'+i, kind:kinds[i], x:s.x0, y:s.y0, door });
+  }
+}
 function setCaveUnlocked(){ if(!cave.placed || cave.unlocked) return;
   cave.unlocked=true;
   world.caveBlock.delete(gi(cave.door.x, cave.door.y));        // the doorway opens…
@@ -523,11 +557,16 @@ function setCaveUnlocked(){ if(!cave.placed || cave.unlocked) return;
    ========================================================================== */
 let mapMode='forest';                       // 'forest' | 'dungeon'
 let savedForest=null, savedDungeon=null;
+const savedDens={};                                     // den0/den1/den2 — the wild caves, each its own little world
+const DEN_IDS=['den0','den1','den2'];
+function getSavedMap(name){ return name==='forest'?savedForest : name==='dungeon'?savedDungeon : savedDens[name]; }
+function setSavedMap(name,s){ if(name==='forest') savedForest=s; else if(name==='dungeon') savedDungeon=s; else savedDens[name]=s; }
 const dungeon={ exit:{x:0,y:0}, forge:{x:0,y:0}, throne:{x:0,y:0}, rooms:[] };
 function snapshotMapState(){
   return { world:Object.assign({}, world), goblins:goblins.slice(), deer:allDeer.slice(), turtles:turtles.slice(),
     campfire, falling:fallingTrees.slice(), particles:particles.slice(), floats:floats.slice(),
     placed:{ henge:henge.placed, cave:cave.placed },   // buildings live in world.bldgs — snapshotted with the world itself
+    dg:{ exit:{...dungeon.exit}, forge:{...dungeon.forge}, throne:{...dungeon.throne} },   // per-world landmarks (dens have their own exits)
     px:player.px, py:player.py };
 }
 function applyMapState(s, withPlayer){
@@ -540,6 +579,7 @@ function applyMapState(s, withPlayer){
   floats.length=0; floats.push(...s.floats);
   campfire=s.campfire;
   henge.placed=s.placed.henge; cave.placed=s.placed.cave;
+  if(s.dg){ dungeon.exit=s.dg.exit; dungeon.forge=s.dg.forge; dungeon.throne=s.dg.throne; }   // each world keeps its own landmarks
   pendingGoblins.length=0; pendingDeer.length=0;
   if(withPlayer){                                       // travel: also reset the hero's action state
     player.path=[]; player.targetCell=null;
@@ -548,30 +588,42 @@ function applyMapState(s, withPlayer){
     player.goShop=false; player.goStall=false; player.goButcher=false; player.goArmor=false; player.goAltar=false; player.goCave=false; player.goExit=false; player.goForge=false;
   }
 }
-function ensureDungeonState(){                          // build the dungeon world without visiting it (a partner went down first)
-  if(savedDungeon || mapMode==='dungeon') return;
+function ensureMapState(name){                          // build a below-ground world without visiting it (a partner went in first)
+  if(name==='forest' || getSavedMap(name) || mapMode===name) return;
   const cur=snapshotMapState();
-  generateDungeon();                                    // (generates into the live globals)
+  if(name==='dungeon') generateDungeon();               // (generates into the live globals)
+  else generateDen(+name.slice(3));
   const dg=snapshotMapState();
   applyMapState(cur, false);
-  savedDungeon=dg;
+  setSavedMap(name, dg);
+}
+function ensureDungeonState(){ ensureMapState('dungeon'); }
+function denRecFor(id){                                 // the den's surface record lives in the FOREST world
+  const dens = mapMode==='forest' ? (world.dens||[]) : ((savedForest&&savedForest.world.dens)||world.dens||[]);
+  return dens.find(d=>d.id===id)||null;
 }
 function travelTo(name){                                // THIS player travels; a partner elsewhere stays where they are
   if(mapMode===name) return;
-  const cur=snapshotMapState();
-  if(mapMode==='forest') savedForest=cur; else savedDungeon=cur;
+  const fromName=mapMode, fromDoor=world.surfaceDoor;   // a den remembers its own mouth on the surface
+  setSavedMap(fromName, snapshotMapState());
   mapMode=name;
-  const dest=(name==='dungeon')?savedDungeon:savedForest;
+  const dest=getSavedMap(name);
   if(dest) applyMapState(dest, true);
-  else generateDungeon();
+  else if(name==='dungeon') generateDungeon();
+  else generateDen(+name.slice(3));
   if(name==='dungeon'){ player.px=(dungeon.exit.x+0.5)*CELL; player.py=(dungeon.exit.y-1+0.5)*CELL;
     addFloat('You descend into the goblin dungeon…', player.px, player.py-CELL*2, '#c7b6f2'); }
-  else { player.px=(cave.door.x+0.5)*CELL; player.py=(cave.door.y+1.5)*CELL;
+  else if(name!=='forest'){ player.px=(dungeon.exit.x+0.5)*CELL; player.py=(dungeon.exit.y-1+0.5)*CELL;
+    addFloat(world.denKind==='bear'?'The air is heavy — something big sleeps here…':'Low growls echo from the dark…',
+      player.px, player.py-CELL*2, '#c7b6f2'); }
+  else { const d=(fromName!=='dungeon' && fromDoor) ? fromDoor : cave.door;   // surface again — at the mouth we entered by
+    player.px=(d.x+0.5)*CELL; player.py=(d.y+1.5)*CELL;
     addFloat('Daylight again — the forest.', player.px, player.py-CELL*2, '#cfe3a8'); }
   player.path=[]; player.targetCell=null;
   setDefaultView();
   if(typeof net!=='undefined' && net.connected) netSend(buildMe());   // tell the partner where we are now
 }
+function enterDen(id){ travelTo(id); }
 function enterDungeon(){ travelTo('dungeon'); }
 function exitDungeon(){ travelTo('forest'); }
 /* --- dual-map simulation: while the partner is on the OTHER map, the host swaps worlds
@@ -591,26 +643,29 @@ function tickWorld(dt){                                 // world-side simulation
 }
 function simulateOtherMap(dt){
   if(typeof net==='undefined' || net.mode!=='host' || !net.connected) return;
-  const otherName=(mapMode==='forest')?'dungeon':'forest';
-  if(!net.clients.some(c=>c.open && c.p.active && (c.p.map||'forest')===otherName)) return;   // no one is over there — nothing else to run
-  if(otherName==='dungeon') ensureDungeonState();
-  let other=(otherName==='dungeon')?savedDungeon:savedForest;
-  if(!other) return;
-  const mine=snapshotMapState(), myMode=mapMode;
-  applyMapState(other, false); mapMode=otherName; simRemoteOnly=true;
-  try{
-    if(net.otherQueue && net.otherQueue.length){        // relayed actions aimed at this map
-      const q=net.otherQueue; net.otherQueue=[]; for(const qm of q) netOnData(qm);
+  const wanted=new Set();                               // every OTHER map someone is standing on gets a tick
+  for(const c of net.clients){ if(c.open && c.p.active){ const mn=c.p.map||'forest'; if(mn!==mapMode) wanted.add(mn); } }
+  if(!wanted.size) return;
+  net.outT2=(net.outT2||0)-dt; const sendNow=net.outT2<=0; if(sendNow) net.outT2=1/20;
+  for(const otherName of wanted){
+    ensureMapState(otherName);
+    const other=getSavedMap(otherName);
+    if(!other) continue;
+    const mine=snapshotMapState(), myMode=mapMode;
+    applyMapState(other, false); mapMode=otherName; simRemoteOnly=true;
+    try{
+      if(net.otherQueue && net.otherQueue.length){      // relayed actions aimed at THIS map (others stay queued)
+        const q=net.otherQueue; net.otherQueue=q.filter(qm=>qm.map!==mapMode);
+        for(const qm of q) if(qm.map===mapMode) netOnData(qm);
+      }
+      tickWorld(dt);
+      if(sendNow){ const sn=buildSnap(); sn.map=otherName; sn.hostMap=myMode;
+        if(sn.players && sn.players[0]) sn.players[0].map=myMode;   // the host himself is still on HIS map, not this one
+        netSend(sn); }
+    } finally {
+      setSavedMap(otherName, snapshotMapState());
+      applyMapState(mine, false); mapMode=myMode; simRemoteOnly=false;
     }
-    tickWorld(dt);
-    net.outT2=(net.outT2||0)-dt;
-    if(net.outT2<=0){ net.outT2=1/20; const sn=buildSnap(); sn.map=otherName; sn.hostMap=myMode;
-      if(sn.players && sn.players[0]) sn.players[0].map=myMode;   // the host himself is still on HIS map, not this one
-      netSend(sn); }
-  } finally {
-    const updated=snapshotMapState();
-    if(otherName==='dungeon') savedDungeon=updated; else savedForest=updated;
-    applyMapState(mine, false); mapMode=myMode; simRemoteOnly=false;
   }
 }
 function makeBigSkel(x,y){                 // the king's summoned bone-giants
@@ -634,7 +689,8 @@ function generateDungeon(){
   world.creekMinX=null; world.creekMaxX=null;
   world.dzone=new Uint8Array(GRID*GRID);                  // 0 mine · 1 hewn stone · 2 throne room
   world.torches=[]; world.rocks=[]; world.rockBlock=new Set(); world.pickups=[]; world.tapestries=[];
-  world.bldgs=[]; henge.placed=false; cave.placed=false;
+  world.bldgs=[]; world.camps=[]; world.dens=[]; world.chests=[]; world.denBlock=new Set();
+  henge.placed=false; cave.placed=false;
   campfire=null; goblins.length=0; allDeer.length=0; turtles.length=0; pendingGoblins.length=0; pendingDeer.length=0;
   const zoneOf=(i,n)=> i<3?0 : 1;
   const carve=(x,y,z)=>{ if(x>1&&x<GRID-2&&y>1&&y<GRID-2){ world.terrain[gi(x,y)]=0; world.dzone[gi(x,y)]=z; } };
@@ -708,6 +764,56 @@ function generateDungeon(){
   for(let i=0;i<21;i++){ const r=rooms[1+((rng()*(rooms.length-2))|0)]; const c=openIn(r); goblins.push(makeBat(c.x,c.y)); }
   for(let i=0;i<15;i++){ const r=rooms[1+((rng()*8)|0)]; const c=openIn(r); goblins.push(makeRat(c.x,c.y)); }
   // player arrives at the bottom of the entry shaft
+  player.px=(dungeon.exit.x+0.5)*CELL; player.py=(dungeon.exit.y-1+0.5)*CELL;
+  player.path=[]; player.targetCell=null;
+}
+/* --- WILD DENS: three small caves out in the forest — two wolf packs and one bear.
+       Each is its own tiny below-ground world: one torch-lit cavern, its beasts, and a chest. --- */
+function makeBeast(x,y,beast){                        // wolves & bears ride the goblin update loop as melee 'claw' kinds
+  const bear=beast==='bear';
+  return { x, y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'claw', beast, size:bear?2:1, faceLeft:false, face:'S',
+    hp:bear?80:14, aggro:false, homeX:x, homeY:y, arrows:0, atkCD:0, gstate:'camp', gpath:[], chopTree:null, chopT:0,
+    wanderCD:Math.random()*2, hopAmt:0, jumpCD:Math.random()*2, jT:null, jDur:0.45, bob:Math.random()*6.28, phase:Math.random()*6.28 };
+}
+function generateDen(i){
+  const rec=denRecFor('den'+i);
+  const rng=mulberry32((worldSeed ^ (0xA5F00D + i*7919))>>>0);
+  world.terrain=new Uint8Array(GRID*GRID).fill(1);      // solid rock…
+  world.moist=new Uint8Array(GRID*GRID);
+  world.trees=[]; world.bushes=[]; world.cattails=[]; world.water=[]; world.moistCells=[]; world.moistRing=[]; world.sites=[];
+  world.wells=[]; world.fences=[]; world.gates=[]; world.fenceBlock=new Set(); world.gateBlock=new Set(); world.wellBlock=new Set();
+  world.stumps=[]; world.bushRespawn=[]; world.campDirt=[]; world.shopDirt=[]; world.pathDirt=[];
+  world.shopProps=[]; world.shopBlock=new Set(); world.crops=new Map(); world.bridge=[]; world.bridgeSet=new Set();
+  world.caveBlock=new Set(); world.hengeBlock=new Set(); world.caveFloor=[]; world.caveRocks=[];
+  world.creekMinX=null; world.creekMaxX=null;
+  world.dzone=new Uint8Array(GRID*GRID);                // 0 = raw mine look throughout
+  world.torches=[]; world.rocks=[]; world.rockBlock=new Set(); world.pickups=[]; world.tapestries=[];
+  world.bldgs=[]; world.bags=[]; world.camps=[]; world.dens=[]; world.chests=[]; world.denBlock=new Set();
+  henge.placed=false; cave.placed=false;
+  campfire=null; goblins.length=0; allDeer.length=0; turtles.length=0; pendingGoblins.length=0; pendingDeer.length=0;
+  const kind = rec ? rec.kind : (i===2?'bear':'wolf');
+  world.denKind=kind; world.surfaceDoor = rec ? {...rec.door} : null;
+  // …with one rough cavern blown through it: overlapping carved blobs around the centre
+  const CX=Math.floor(GRID/2), CY=Math.floor(GRID/2);
+  const carve=(x,y)=>{ if(x>2&&x<GRID-3&&y>2&&y<GRID-3) world.terrain[gi(x,y)]=0; };
+  const blob=(bx,by,r)=>{ for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++) if(dx*dx+dy*dy<=r*r+rng()*2) carve(bx+dx,by+dy); };
+  blob(CX,CY,6); blob(CX-6,CY+2,4); blob(CX+6,CY-2,4); blob(CX+2,CY-6,3); blob(CX-3,CY+6,3);
+  if(kind==='bear') blob(CX+9,CY-5,4);                  // the bear's sleeping alcove, deeper in
+  // entry shaft on the south lip of the cavern
+  let ey=CY; while(world.terrain[gi(CX,ey+1)]===0) ey++;
+  carve(CX,ey+1); carve(CX,ey+2);
+  dungeon.exit={x:CX, y:Math.min(GRID-4, ey+2)};
+  dungeon.forge={x:-99,y:-99}; dungeon.throne={x:-99,y:-99};   // no forge, no throne — just beasts
+  // torches at the mouth so the way out reads (deeper in stays gloomy)
+  world.torches.push({x:CX-1, y:dungeon.exit.y-1, ph:rng()*6.28});
+  world.torches.push({x:CX+1, y:dungeon.exit.y-1, ph:rng()*6.28});
+  const openSpot=()=>{ for(let t=0;t<200;t++){ const x=CX-8+((rng()*17)|0), y=CY-8+((rng()*17)|0);
+    if(world.terrain[gi(x,y)]===0) return {x,y}; } return {x:CX,y:CY}; };
+  if(kind==='bear'){ goblins.push(makeBeast(CX+9, CY-5, 'bear')); }
+  else { for(let w=0;w<4;w++){ const c=openSpot(); goblins.push(makeBeast(c.x, c.y, 'wolf')); } }
+  // the prize: a chest of GULD at the cavern's far side
+  world.chests=[{x:CX+(kind==='bear'?11:7), y:CY-(kind==='bear'?5:6), guld: kind==='bear'?150:60+((rng()*40)|0), open:false}];
+  if(world.terrain[gi(world.chests[0].x, world.chests[0].y)]!==0){ const c=openSpot(); world.chests[0].x=c.x; world.chests[0].y=c.y; }
   player.px=(dungeon.exit.x+0.5)*CELL; player.py=(dungeon.exit.y-1+0.5)*CELL;
   player.path=[]; player.targetCell=null;
 }
@@ -1137,6 +1243,48 @@ function spawnGoblins(){
     goblins.push({ x:gx, y:gy, px:(gx+0.5)*CELL, py:(gy+0.5)*CELL, kind, faceLeft: dx>0, face: face8(-dx, -dy), size: kind==='boss'?3:1,
       hp: kind==='boss'?BOSS_HP:20, aggro:false, homeX:gx, homeY:gy, arrows: kind==='archer'?3:0, atkCD:0, gstate:'camp', gpath:[], chopTree:null, chopT:0,
       hopAmt:0, jumpCD:Math.random()*2, jT:null, jDur:0.45, bob:Math.random()*6.28, phase:Math.random()*6.28 }); }
+  spawnEastCamps();
+}
+function spawnEastCamps(){                 // two SMALL goblin camps on the east bank, far from where players wake
+  world.camps=[];
+  const rng=mulberry32((worldSeed ^ 0xC0FFEE)>>>0);      // seeded: every client lays the camps in the same clearings
+  const minX=Math.max(4, (world.creekMaxX!=null?world.creekMaxX:0)+8);
+  const spawnPt={x:Math.floor(GRID*0.78), y:Math.floor(GRID/2)};      // players start on the east road
+  const bushSet=new Set(world.bushes.map(b=>b.y*GRID+b.x));
+  const clearAround=(p,rad)=>{ for(let dy=-rad;dy<=rad;dy++)for(let dx=-rad;dx<=rad;dx++){
+    const x=p.x+dx, y=p.y+dy; if(!inGrid(x,y)||isBlocked(x,y)||bushSet.has(y*GRID+x)) return false; } return true; };
+  for(let n=0;n<2;n++){
+    let c=null;
+    for(let i=0;i<800 && !c;i++){
+      const x=minX+((rng()*(GRID-minX-6))|0), y=6+((rng()*(GRID-12))|0);
+      if(Math.hypot(x-spawnPt.x, y-spawnPt.y)<45) continue;           // …but well away from the starting area
+      if(world.camps.some(cp=>Math.hypot(cp.x-x, cp.y-y)<30)) continue;
+      const p={x,y}; if(clearAround(p,3)) c=p;
+    }
+    if(!c) continue;
+    // a small ring of bare dirt, trees cleared off it
+    const ftx=(c.x/TILE)|0, fty=(c.y/TILE)|0, TG=GRID/TILE;
+    for(let dty=-1;dty<=1;dty++)for(let dtx=-1;dtx<=1;dtx++){
+      const tx=ftx+dtx, ty=fty+dty; if(tx<0||ty<0||tx>=TG||ty>=TG) continue;
+      for(let dy=0;dy<TILE;dy++)for(let dx=0;dx<TILE;dx++) world.campDirt.push({x:tx*TILE+dx, y:ty*TILE+dy, edge:false}); }
+    const keep=[];
+    for(const t of world.trees){
+      let nd=1e9; for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) nd=Math.min(nd, Math.hypot((t.x+dx)-c.x,(t.y+dy)-c.y));
+      if(nd<=5.5){ for(let dy=0;dy<TILE;dy++) for(let dx=0;dx<TILE;dx++) if(inGrid(t.x+dx,t.y+dy)&&world.terrain[gi(t.x+dx,t.y+dy)]===1) world.terrain[gi(t.x+dx,t.y+dy)]=0; }
+      else keep.push(t);
+    }
+    world.trees=keep;
+    world.camps.push({x:c.x, y:c.y});
+    // three goblins round the fire: a bow and two claws, homed here
+    const trio=[[2,-1,'archer'],[-2,1,'claw'],[1,2,'claw']];
+    for(const [dx,dy,kind] of trio){ const gx=c.x+dx, gy=c.y+dy;
+      goblins.push({ x:gx, y:gy, px:(gx+0.5)*CELL, py:(gy+0.5)*CELL, kind, faceLeft:dx>0, face:face8(-dx,-dy), size:1,
+        hp:20, aggro:false, homeX:gx, homeY:gy, arrows:kind==='archer'?3:0, atkCD:0, gstate:'camp', gpath:[], chopTree:null, chopT:0,
+        hopAmt:0, jumpCD:Math.random()*2, jT:null, jDur:0.45, bob:Math.random()*6.28, phase:Math.random()*6.28 }); }
+    // the camp's plunder: a chest of GULD (placed once per world — a fresh hero can't re-loot it)
+    world.chests=world.chests||[];
+    if(!world.chests.some(ch=>ch.camp===n)) world.chests.push({x:c.x-2, y:c.y-2, guld:50+((rng()*50)|0), open:false, camp:n});
+  }
 }
 // 10 extra goblins roaming west of the creek: 3 bow goblins (long-distance wanderers) + 7 claws that trail them
 const pendingGoblins = [];           // skeletons raised this frame, flushed into goblins after the update loop
@@ -1309,8 +1457,9 @@ function updateMelee(g, dt){
       if(g.roamer && g.leader){ followLeader(g, dt); } else { g.gpath=[]; goblinDance(g, dt); } return;
     }
   }
-  const wood=g.kind==='wood';
-  const range=boss?3:1.6, dmg=boss?10:wood?1:5, cd=boss?1.4:1.0, speed=boss?MOVE_SPEED*0.6:wood?MOVE_SPEED*0.7:MOVE_SPEED*0.9;   // goblins hit for 5, the boss for 10 — a Wood Goblin for 1
+  const wood=g.kind==='wood', bear=g.beast==='bear', wolf=g.beast==='wolf';
+  const range=boss?3:bear?2.2:1.6, dmg=boss?10:wood?1:bear?12:wolf?4:5, cd=boss?1.4:bear?1.6:wolf?0.8:1.0,
+        speed=boss?MOVE_SPEED*0.6:wood?MOVE_SPEED*0.7:bear?MOVE_SPEED*0.55:wolf?MOVE_SPEED*1.15:MOVE_SPEED*0.9;   // wolves bite fast & shallow; the bear mauls slow & deep
   if(pd>(g.aggro?9999:8*aggroMulFor(T))){                     // not engaged — the Aggro arrows set how close is too close
     if(g.roamer && g.leader){ followLeader(g, dt); return; }  // roaming claw — trail its bow goblin
     g.gpath=[]; goblinDance(g, dt); return;                   // camp goblin — mill at the fire
@@ -1339,7 +1488,7 @@ function updateMelee(g, dt){
           return; } }
     }
     g.repathG=(g.repathG||0)-dt;
-    if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), boss?3:1); g.repathG=0.4; }
+    if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), boss?3:(g.size||1)); g.repathG=0.4; }
     goblinMove(g, speed, dt);
   }
 }
@@ -1435,6 +1584,9 @@ function updateWitch(w, dt){
   if(w.raiseCD>0) w.raiseCD-=dt;
   const Tw=nearestFoe(w.px, w.py);
   const pdp=Math.hypot(cellOf(w.px)-cellOf(Tw.px), cellOf(w.py)-cellOf(Tw.py));
+  if(w.vengeT>0){ w.vengeT-=dt;     // struck! she keeps her distance, but now the shadows burn back
+    w.fireCD=(w.fireCD||0)-dt;
+    if(!Tw.dead && w.fireCD<=0 && pdp<=14){ w.fireCD=1.6; w.face=face8(Tw.px-w.px, Tw.py-w.py); fireWitchball(w, Tw); } }
   if(!Tw.dead && pdp<=15){          // the witch is a coward — drift away whenever any player is within 15 tiles
     w.castT=0; w.pendingBones=null; w.boneTarget=null; w.face=face8(w.px-Tw.px, w.py-Tw.py);
     w.repathG=(w.repathG||0)-dt;
@@ -1491,6 +1643,28 @@ function fireBolt(k, T){                       // the king's lightning: a crackl
   const dist=Math.hypot(tx-sx, ty-sy)||1, dur=Math.max(0.18, dist/(CELL*16));
   addParticle({ kind:'bolt', x:sx, y:sy, x0:sx, y0:sy, tx, ty, t:0, dur, life:99, max:99, toRemote:(T!==player), tp:(T!==player?T:null) });
   if(typeof net!=='undefined' && net.connected) netSend({t:'afx', map:mapMode, x0:Math.round(sx), y0:Math.round(sy), tx:Math.round(tx), ty:Math.round(ty), dur:+dur.toFixed(2), bolt:1});
+}
+function fireWitchball(w, T){                  // the witch's answer: a small, spiteful ball of green-edged flame
+  const sx=w.px, sy=w.py-CELL*0.9, tx=T.px, ty=T.py-CELL*0.4;
+  const dist=Math.hypot(tx-sx, ty-sy)||1, dur=Math.max(0.22, dist/(CELL*11));
+  addParticle({ kind:'bolt', fire:1, dmg:4, x:sx, y:sy, x0:sx, y0:sy, tx, ty, t:0, dur, life:99, max:99, toRemote:(T!==player), tp:(T!==player?T:null) });
+  if(typeof net!=='undefined' && net.connected) netSend({t:'afx', map:mapMode, x0:Math.round(sx), y0:Math.round(sy), tx:Math.round(tx), ty:Math.round(ty), dur:+dur.toFixed(2), bolt:1, fire:1});
+}
+function witchBoomFX(x, y){                    // she bursts in a ball of evil green fire
+  for(let j=0;j<46;j++){ const a=Math.random()*Math.PI*2, sp=60+Math.random()*220;
+    addParticle({kind:'bit', x:x+(Math.random()-0.5)*CELL*0.4, y:y-CELL*0.5, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-40, g:60,
+      life:0.4+Math.random()*0.5, max:0.9, size:CELL*(0.05+Math.random()*0.06), color: Math.random()<0.6?'#7cff6a':(Math.random()<0.5?'#2f8f2f':'#d8ffb0')}); }
+  addFloat('The Witch bursts in green fire!', x, y-CELL*2.6, '#7cff6a');
+}
+function witchSlain(w){                        // her death curse: ten skeletons claw up where she fell
+  witchBoomFX(w.px, w.py);
+  if(typeof net!=='undefined' && net.mode==='guest') return;   // the host raises the dead; guests just watch
+  const cx=cellOf(w.px), cy=cellOf(w.py);
+  for(let i=0;i<10;i++){
+    const c=nearestOpen(Math.max(1,Math.min(GRID-2,cx-2+((Math.random()*5)|0))), Math.max(1,Math.min(GRID-2,cy-2+((Math.random()*5)|0)))) || {x:cx,y:cy};
+    const s = Math.random()<0.25 ? makeBigSkel(c.x, c.y) : makeSkeleton(c.x, c.y);   // random type: mostly warriors, a few bone-giants
+    pendingGoblins.push(s);
+  }
 }
 function updateKing(k, dt){
   const T=nearestFoe(k.px, k.py);
@@ -1697,8 +1871,12 @@ function updatePlayer(dt){
         else enterDungeon(true);                          // the door stands open — descend
       }
       player.goCave=false; }
+    if(player.goDen){ const dn=(world.dens||[]).find(d3=>d3.id===player.goDen); player.goDen=null;
+      if(dn && Math.abs(cellOf(player.px)-dn.door.x)<=2 && Math.abs(cellOf(player.py)-dn.door.y)<=2) enterDen(dn.id); }
+    if(player.goChest!=null){ const c3=(world.chests||[])[player.goChest]; const ci=player.goChest; player.goChest=null;
+      if(c3 && Math.abs(cellOf(player.px)-c3.x)<=1 && Math.abs(cellOf(player.py)-c3.y)<=1) openChest(ci); }
     if(player.goExit){ const e2=dungeon.exit;
-      if(mapMode==='dungeon' && Math.abs(cellOf(player.px)-e2.x)<=1 && Math.abs(cellOf(player.py)-e2.y)<=1) exitDungeon(true);
+      if(mapMode!=='forest' && Math.abs(cellOf(player.px)-e2.x)<=1 && Math.abs(cellOf(player.py)-e2.y)<=1) exitDungeon(true);
       player.goExit=false; }
     if(player.goForge){ const f2=dungeon.forge;
       if(mapMode==='dungeon' && Math.abs(cellOf(player.px)-f2.x)<=1 && Math.abs(cellOf(player.py)-f2.y)<=1){
@@ -2162,7 +2340,8 @@ function killCreature(kind, cr, fromRemote){
   const p=creaturePos(kind, cr);
   spawnBlood(p.x, p.y-CELL*0.35, 26, true);         // big bloody spray on death
   if(kind==='deer'){ deerDies(cr); spookNearbyDeer(cr); }   // no skins on the kill — you must skin the carcass
-  else { goblinDies(cr); if(cr.kind==='boss') bossSlain(fromRemote); if(cr.kind==='king') kingSlain(fromRemote); }
+  else { goblinDies(cr); if(cr.kind==='boss') bossSlain(fromRemote); if(cr.kind==='king') kingSlain(fromRemote);
+    if(cr.kind==='witch') witchSlain(cr); }
 }
 function spookNearbyDeer(dead){                     // a fresh kill panics the herd: deer within 10 tiles bolt 20 away
   for(const d of allDeer){ if(d===dead || d.dead || d.gone) continue;
@@ -2183,6 +2362,7 @@ function damageCreature(kind, cr, amount, fromRemote){   // deal `amount` damage
   cr.hp = (cr.hp==null?1:cr.hp) - amount;
   const p=creaturePos(kind, cr);
   if(kind==='goblin') alertGoblins(cr);             // struck goblin summons nearby goblins onto the player
+  if(kind==='goblin' && cr.kind==='witch' && cr.hp>0){ cr.vengeT=8; cr.fireCD=Math.min(cr.fireCD||0, 0.4); }   // wound the witch and she answers in fire
   if(cr.hp<=0) killCreature(kind, cr, fromRemote);
   else spawnBlood(p.x, p.y-CELL*0.35, 9, false);    // wounded — a smaller spray
 }
@@ -2800,6 +2980,75 @@ function drawBag(b){                                // one item lies in the open
   }
   ctx.restore();
 }
+function openChest(i){                              // crack a chest of GULD — the coin lands straight in your purse
+  const c=(world.chests||[])[i]; if(!c || c.open) return;
+  c.open=true; player.guld=(player.guld||0)+c.guld;
+  addFloat('+'+c.guld+' GULD!', player.px, player.py-CELL*2.2, '#e7c877');
+  if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'chest', map:mapMode, i});
+}
+function drawChest(s, ch){                          // a banded wooden chest; open = lid thrown back, gold aglow
+  const u=Math.max(10, CELL*cam.scale*0.62);
+  shadow(s.x, s.y+u*0.1, u*0.6, u*0.2);
+  if(!ch.open){
+    ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(s.x-u*0.5, s.y-u*0.55, u, u*0.62, u*0.08); ctx.fill();      // body
+    ctx.fillStyle='#5a3a1e'; ctx.beginPath(); ctx.roundRect(s.x-u*0.5, s.y-u*0.72, u, u*0.3, u*0.1); ctx.fill();        // lid
+    rect(s.x-u*0.06, s.y-u*0.72, u*0.12, u*0.72, '#d9a62e');                                                             // gold band
+    rect(s.x-u*0.09, s.y-u*0.3, u*0.18, u*0.16, '#e7c877');                                                              // clasp
+  } else {
+    ctx.fillStyle='#5a3a1e'; ctx.beginPath(); ctx.roundRect(s.x-u*0.5, s.y-u*0.95, u, u*0.26, u*0.1); ctx.fill();       // lid thrown back
+    ctx.fillStyle='#6e4526'; ctx.beginPath(); ctx.roundRect(s.x-u*0.5, s.y-u*0.55, u, u*0.62, u*0.08); ctx.fill();      // body
+    ctx.fillStyle='#2b1c10'; ctx.beginPath(); ctx.roundRect(s.x-u*0.4, s.y-u*0.5, u*0.8, u*0.2, u*0.06); ctx.fill();    // dark, emptied inside
+  }
+}
+function drawDenMouth(s, dn){                       // a craggy 3x3 outcrop with a dark opening — wolves or a bear within
+  const u=Math.max(12, CELL*cam.scale);
+  shadow(s.x, s.y+u*0.1, u*1.7, u*0.5);
+  ctx.fillStyle='#7d858d'; ctx.beginPath();                                            // the rock pile
+  ctx.moveTo(s.x-u*1.5, s.y); ctx.lineTo(s.x-u*1.1, s.y-u*1.5); ctx.lineTo(s.x-u*0.3, s.y-u*2.0);
+  ctx.lineTo(s.x+u*0.6, s.y-u*1.7); ctx.lineTo(s.x+u*1.5, s.y-u*0.9); ctx.lineTo(s.x+u*1.5, s.y);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#6a727a'; ctx.beginPath();                                            // shaded face
+  ctx.moveTo(s.x-u*0.3, s.y-u*2.0); ctx.lineTo(s.x+u*0.6, s.y-u*1.7); ctx.lineTo(s.x+u*1.5, s.y-u*0.9); ctx.lineTo(s.x+u*1.5, s.y); ctx.lineTo(s.x+u*0.2, s.y);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#101418'; ctx.beginPath();                                            // the mouth
+  ctx.ellipse(s.x, s.y-u*0.35, u*0.55, u*0.7, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle='#f4e7cf'; ctx.textAlign='center'; ctx.textBaseline='bottom';
+  ctx.font='bold '+Math.max(9, Math.round(u*0.34))+'px system-ui, sans-serif';
+  ctx.fillText(dn.kind==='bear'?'Bear Den':'Wolf Den', s.x, s.y-u*2.1);
+}
+function drawWolf(pt, g){                           // a grey forest wolf: low body, keen ears, brush tail
+  const u=Math.max(8, CELL*cam.scale), fx=pt.x, fy=pt.y, L=g.faceLeft?-1:1;
+  shadow(fx, fy, u*0.8, u*0.24);
+  const grey='#8a9099', dark='#5d646d';
+  ctx.fillStyle=grey; ctx.beginPath(); ctx.ellipse(fx, fy-u*0.42, u*0.62, u*0.34, 0, 0, Math.PI*2); ctx.fill();   // body
+  beam(fx-L*u*0.55, fy-u*0.5, fx-L*u*0.95, fy-u*0.72, u*0.13, dark);                                             // brush tail
+  circle(fx+L*u*0.52, fy-u*0.66, u*0.26, grey);                                                                  // head
+  tri([fx+L*u*0.4, fy-u*0.86],[fx+L*u*0.55, fy-u*1.05],[fx+L*u*0.62, fy-u*0.84], dark);                          // ears
+  tri([fx+L*u*0.6, fy-u*0.9],[fx+L*u*0.74, fy-u*1.02],[fx+L*u*0.78, fy-u*0.82], dark);
+  beam(fx+L*u*0.52, fy-u*0.62, fx+L*u*0.85, fy-u*0.56, u*0.16, grey);                                            // muzzle
+  circle(fx+L*u*0.62, fy-u*0.7, u*0.045, '#ffb44a');                                                             // the eye
+  for(const lx of [-0.32, -0.05, 0.28]) beam(fx+lx*u, fy-u*0.2, fx+lx*u, fy, u*0.1, dark);                       // legs
+}
+function drawBear(pt, g){                           // the bear: a great brown hulk, small ears, heavy paws
+  const u=Math.max(8, CELL*cam.scale)*1.6, fx=pt.x, fy=pt.y, L=g.faceLeft?-1:1;
+  shadow(fx, fy, u*0.95, u*0.3);
+  const brown='#6e4a2e', dark2='#553821';
+  ctx.fillStyle=brown; ctx.beginPath(); ctx.ellipse(fx, fy-u*0.5, u*0.72, u*0.46, 0, 0, Math.PI*2); ctx.fill();  // bulk
+  ctx.fillStyle=brown; ctx.beginPath(); ctx.ellipse(fx-L*u*0.2, fy-u*0.78, u*0.42, u*0.32, 0, 0, Math.PI*2); ctx.fill();   // shoulder hump
+  circle(fx+L*u*0.6, fy-u*0.72, u*0.3, brown);                                                                   // head
+  circle(fx+L*u*0.48, fy-u*0.98, u*0.1, dark2); circle(fx+L*u*0.74, fy-u*0.94, u*0.1, dark2);                    // ears
+  beam(fx+L*u*0.62, fy-u*0.68, fx+L*u*0.92, fy-u*0.6, u*0.18, dark2);                                            // muzzle
+  circle(fx+L*u*0.7, fy-u*0.78, u*0.05, '#e05a3a');                                                              // the eye
+  for(const lx of [-0.42, -0.1, 0.3]) beam(fx+lx*u, fy-u*0.2, fx+lx*u, fy, u*0.16, dark2);                       // heavy legs
+}
+function drawBeastCorpse(s, g){                     // a fallen wolf or bear, on its side
+  const u=Math.max(8, CELL*cam.scale)*(g.beast==='bear'?1.5:1);
+  shadow(s.x, s.y, u*0.8, u*0.24);
+  ctx.fillStyle=g.beast==='bear'?'#5d3e26':'#767c85';
+  ctx.beginPath(); ctx.ellipse(s.x, s.y-u*0.18, u*0.72, u*0.26, 0, 0, Math.PI*2); ctx.fill();
+  circle(s.x+u*0.6, s.y-u*0.2, u*0.2, g.beast==='bear'?'#5d3e26':'#767c85');
+  beam(s.x-u*0.6, s.y-u*0.2, s.x-u*0.9, s.y-u*0.3, u*0.1, g.beast==='bear'?'#4a3019':'#5d646d');
+}
 function drawWell(s){                               // a stone ring, two posts and a little gabled roof
   const u=Math.max(8, CELL*cam.scale);
   ctx.save();
@@ -3177,7 +3426,18 @@ function onTapWorld(wx,wy){
     player.goCave=true; player.goShop=false; player.goAltar=false; player.attack=null; player.propTarget=null;   // tapped the cave — walk to its door
     player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null; player.chopTree=null; player.chopping=false;
     pathToCell(cave.door.x, cave.door.y+1); return; }
-  if(mapMode==='dungeon' && Math.abs(cx-dungeon.exit.x)<=1 && Math.abs(cy-dungeon.exit.y)<=1){       // tapped the way out
+  if(mapMode==='forest'){                                                        // tapped a wild den's mouth — walk in
+    const dn=(world.dens||[]).find(d2=> cx>=d2.x-1&&cx<=d2.x+3 && cy>=d2.y-1&&cy<=d2.y+3);
+    if(dn){ player.goDen=dn.id; player.goShop=false; player.goAltar=false; player.goCave=false; player.attack=null; player.propTarget=null;
+      player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null; player.chopTree=null; player.chopping=false;
+      pathToCell(dn.door.x, dn.door.y+1); return; } }
+  { const chI=(world.chests||[]).findIndex(c2=>!c2.open && Math.abs(cx-c2.x)<=1 && Math.abs(cy-c2.y)<=1);
+    if(chI>=0){ const c2=world.chests[chI];                                      // tapped a chest of GULD
+      if(Math.abs(cellOf(player.px)-c2.x)<=1 && Math.abs(cellOf(player.py)-c2.y)<=1) openChest(chI);
+      else { player.goChest=chI; player.attack=null; player.propTarget=null; player.chopTree=null; player.chopping=false;
+        const d3=nearestOpen(c2.x, c2.y+1)||nearestOpen(c2.x,c2.y); if(d3) pathToCell(d3.x, d3.y); }
+      return; } }
+  if(mapMode!=='forest' && Math.abs(cx-dungeon.exit.x)<=1 && Math.abs(cy-dungeon.exit.y)<=1){       // tapped the way out
     player.goExit=true; player.attack=null; player.propTarget=null; player.soulTarget=null; player.chopTree=null; player.chopping=false; player.mineRock=null;
     pathToCell(dungeon.exit.x, dungeon.exit.y-1); return; }
   if(mapMode==='dungeon' && cx>=dungeon.forge.x-1 && cx<=dungeon.forge.x+2 && Math.abs(cy-dungeon.forge.y)<=1){   // tapped the forge
@@ -3881,10 +4141,10 @@ function updateParticles(dt){
     else if(p.kind==='bolt'){ p.t+=dt; const f=Math.min(1,p.t/p.dur);
       p.x=p.x0+(p.tx-p.x0)*f; p.y=p.y0+(p.ty-p.y0)*f;
       if(p.t>=p.dur){
-        if(!p.fx){ if(p.toRemote){ if(p.tp && typeof netHitRemote==='function') netHitRemote(p.tp,8,false); } else if(!player.dead) playerHit(8, true); }
-        for(let j=0;j<10;j++){ const a=Math.random()*Math.PI*2, sp=50+Math.random()*120;   // zap burst
+        if(!p.fx){ const bd=p.dmg||8; if(p.toRemote){ if(p.tp && typeof netHitRemote==='function') netHitRemote(p.tp,bd,false); } else if(!player.dead) playerHit(bd, true); }
+        for(let j=0;j<10;j++){ const a=Math.random()*Math.PI*2, sp=50+Math.random()*120;   // zap burst (embers, for a fireball)
           addParticle({kind:'bit', x:p.tx, y:p.ty-CELL*0.3, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-30, g:80,
-            life:0.3+Math.random()*0.25, max:0.55, size:CELL*0.05, color: Math.random()<0.5?'#ffe97a':'#aee3ff'}); }
+            life:0.3+Math.random()*0.25, max:0.55, size:CELL*0.05, color: p.fire?(Math.random()<0.5?'#ff9c3a':'#7cff6a'):(Math.random()<0.5?'#ffe97a':'#aee3ff')}); }
         particles.splice(i,1); } continue; }
     else if(p.kind==='boulder'){ p.t+=dt; const f=Math.min(1,p.t/p.dur);
       p.x=p.x0+(p.tx-p.x0)*f; p.y=p.y0+(p.ty-p.y0)*f; p.f=f; p.hz=Math.sin(Math.PI*f)*p.arc;   // a lobbed arc, not an arrow's line
@@ -3930,6 +4190,14 @@ function drawParticles(){
         circle(s.x-r*0.33, yy-r*0.18, r*0.17, '#4a3d6e');                        // little eyes
         circle(s.x+r*0.33, yy-r*0.18, r*0.17, '#4a3d6e');
       } }
+    else if(p.kind==='bolt' && p.fire){                       // the witch's fireball: a burning green-hearted ember
+      const r=Math.max(3, CELL*cam.scale*0.18);
+      circle(s.x, s.y, r*1.5, 'rgba(124,255,106,0.25)');
+      circle(s.x, s.y, r, '#ff9c3a'); circle(s.x-r*0.2, s.y-r*0.2, r*0.55, '#ffe066');
+      circle(s.x, s.y, r*0.3, '#7cff6a');
+      for(let k2=1;k2<=3;k2++){ const f2=k2/4, txp=s.x+(worldToScreen(p.x0,p.y0).x-s.x)*f2*0.25, typ=s.y+(worldToScreen(p.x0,p.y0).y-s.y)*f2*0.25;
+        ctx.globalAlpha=0.5-0.13*k2; circle(txp, typ, r*(1-0.22*k2), '#ff7a30'); }
+      ctx.globalAlpha=1; }
     else if(p.kind==='bolt'){
       ctx.strokeStyle='#ffe97a'; ctx.lineWidth=Math.max(2, CELL*cam.scale*0.08); ctx.globalAlpha=0.95;
       const ox=worldToScreen(p.x0,p.y0), seg=5;
@@ -4507,7 +4775,7 @@ function buildMinimap(){                       // paint one pixel block per cell
   const g=c.getContext('2d');
   for(let y=0;y<GRID;y++) for(let x=0;x<GRID;x++){
     let col;
-    if(mapMode==='dungeon'){
+    if(mapMode!=='forest'){
       const t=world.terrain[gi(x,y)];
       col = t===1 ? '#101114' : (world.dzone&&world.dzone[gi(x,y)]===2 ? '#3d2f3a' : world.dzone&&world.dzone[gi(x,y)]===1 ? '#2c2e33' : '#26221e');
     } else {
@@ -4737,6 +5005,8 @@ function drawSkeleton(pt, g){                 // a bone-white warrior, red eye-s
   beam(fx+dir*u*0.2, fy-u*0.86, px2, py2, u*0.045, b); circle(px2, py2, u*0.06, b);         // punching arm + fist
 }
 function drawGoblin(pt, g){                   // green humanoid + weapon, 8-direction; boss is 2x2-sized
+  if(g.beast==='wolf'){ drawWolf(pt, g); return; }
+  if(g.beast==='bear'){ drawBear(pt, g); return; }
   if(g.kind==='witch'){ drawWitch(pt, g); return; }
   if(g.kind==='king'){ drawKing(pt, g); return; }
   if(g.kind==='bat'){ drawBat(pt, g); return; }
@@ -4805,8 +5075,8 @@ function draw(){
   // backdrop + grass field
   ctx.fillStyle=PAL.outside; ctx.fillRect(0,0,canvas.width,canvas.height);
   const g0=worldToScreen(0,0), g1=worldToScreen(WORLD,WORLD);
-  rect(g0.x, g0.y, g1.x-g0.x, g1.y-g0.y, mapMode==='dungeon'?'#17181c':PAL.grass);
-  if(mapMode==='dungeon') drawDungeonGround();   // rock and torchlight replace the meadow
+  rect(g0.x, g0.y, g1.x-g0.x, g1.y-g0.y, mapMode!=='forest'?'#17181c':PAL.grass);
+  if(mapMode!=='forest') drawDungeonGround();   // rock and torchlight replace the meadow
 
   // moisture: transition ring (intermediate) then the darker core, so it eases into grass
   for(const m of world.moistRing){
@@ -4902,7 +5172,10 @@ function draw(){
     items.push({wx:(henge.altar.x+0.5)*CELL, wy:(henge.altar.y+0.95)*CELL, kind:17});                      // the altar
   }
   if(cave.placed) items.push({wx:(cave.x+2.5)*CELL, wy:(cave.y+4.95)*CELL, kind:18});                     // the cave: one great boulder, door and all
-  if(mapMode==='dungeon'){
+  for(const dn of (world.dens||[])) items.push({wx:(dn.x+1.5)*CELL, wy:(dn.y+2.95)*CELL, kind:32, ref:dn});   // the wild dens' craggy mouths
+  for(const ch of (world.chests||[])) items.push({wx:(ch.x+0.5)*CELL, wy:(ch.y+0.6)*CELL, kind:31, ref:ch});  // chests of GULD (camps & dens)
+  for(const cp of (world.camps||[])) items.push({wx:(cp.x+0.5)*CELL, wy:(cp.y+0.5)*CELL, kind:5});            // the east camps' fires
+  if(mapMode!=='forest'){
     for(const t2 of world.torches) items.push({wx:(t2.x+0.5)*CELL, wy:(t2.y+0.12)*CELL, kind:20, ref:t2});
     for(const r2 of world.rocks){ if(!r2.gone) items.push({wx:(r2.x+0.5)*CELL, wy:(r2.y+0.9)*CELL, kind:21, ref:r2}); }
     for(const pk2 of world.pickups){ if(!pk2.taken) items.push({wx:(pk2.x+0.5)*CELL, wy:(pk2.y+0.9)*CELL, kind:22, ref:pk2}); }
@@ -4964,7 +5237,7 @@ function draw(){
     else if(it.kind===3){ const ps=worldToScreen(player.px, player.py); if(player.dead) drawDeadPlayer(ps); else drawPerson(ps); }   // real position; sorted in front of the tree
     else if(it.kind===4){ if(it.ref.dead) (it.ref.deadT>=DEER_FRESH_T ? drawBones : drawCorpse)(worldToScreen(it.ref.px,it.ref.py), it.ref); else drawDeer(s, it.ref); }
     else if(it.kind===5) drawFire(s);
-    else if(it.kind===6){ if(it.ref.dead) ((it.ref.kind==='skeleton'||it.ref.kind==='bigskel'||it.ref.deadT>=60) ? drawBones : drawGoblinCorpse)(s, it.ref); else { drawGoblin(s, it.ref);
+    else if(it.kind===6){ if(it.ref.dead) ((it.ref.kind==='skeleton'||it.ref.kind==='bigskel'||it.ref.deadT>=60) ? drawBones : it.ref.beast ? drawBeastCorpse : drawGoblinCorpse)(s, it.ref); else { drawGoblin(s, it.ref);
       if(it.ref.kind==='boss' && it.ref.hp<BOSS_HP){                                        // wounded boss: a red bar over his head
         const bu=CELL*cam.scale*2.85, bw=bu*1.1, bh=Math.max(3, bu*0.055), bx=s.x-bw/2, by=s.y-bu*2.15;
         rect(bx-2, by-2, bw+4, bh+4, 'rgba(15,10,8,.7)');
@@ -4976,6 +5249,8 @@ function draw(){
     else if(it.kind===13) drawStall(s);
     else if(it.kind===29) drawSite(it.ref);
     else if(it.kind===30) drawBag(it.ref);
+    else if(it.kind===31) drawChest(s, it.ref);
+    else if(it.kind===32) drawDenMouth(s, it.ref);
     else if(it.kind===31) drawWell(s);
     else if(it.kind===32) drawFence(s, it.ref);
     else if(it.kind===33) drawGate(s, it.ref);
@@ -6140,6 +6415,8 @@ function drawMapTab(M){                                // the whole world, writ 
     for(const s of (world.sites||[])){ const n2=BUILDINGS[s.kind].tiles*TILE;
       sq2((s.tx*TILE+n2/2)*CELL, (s.ty*TILE+n2/2)*CELL, Math.max(2.5,3*DPR), '#b8b8b8', true); }
     for(const b of (world.bags||[])) dot((b.x+0.5)*CELL, (b.y+0.5)*CELL, Math.max(2,2.2*DPR), '#e7c877');   // dropped bags glint gold
+    for(const c of (world.chests||[])){ if(!c.open) dot((c.x+0.5)*CELL, (c.y+0.5)*CELL, Math.max(2,2.4*DPR), '#ffd24a'); }   // unopened chests burn brighter
+    for(const dn of (world.dens||[])) dot((dn.x+1.5)*CELL, (dn.y+1.5)*CELL, Math.max(2.4,2.8*DPR), '#9aa4ae');              // the dens' grey crags
     for(const f of (world.fences||[])) sq2((f.tx*TILE+1.5)*CELL, (f.ty*TILE+1.5)*CELL, Math.max(1.5,1.8*DPR), '#b58a50');   // fence line
     for(const g2 of (world.gates||[])) sq2((g2.tx*TILE+1.5)*CELL, (g2.ty*TILE+1.5)*CELL, Math.max(1.5,1.8*DPR), '#e7c877'); // gates
     for(const w of (world.wells||[]))  dot((w.tx*TILE+1.5)*CELL, (w.ty*TILE+1.5)*CELL, Math.max(2,2.4*DPR), '#7ec8d8');     // wells
@@ -6674,8 +6951,9 @@ function loop(ts){
         pk2.taken=true; player.pickaxe=1; addFloat('+ Pickaxe!', player.px, player.py-CELL*1.9, '#cfd6de');
         if(typeof net!=='undefined' && net.mode==='guest' && net.connected) netSend({t:'pick', map:mapMode, i:world.pickups.indexOf(pk2)}); } } }
   fishTimer-=dt; if(fishTimer<=0){ fishTimer=6+Math.random()*8; if(mapMode==='forest') spawnFishAtDeep(); }   // fish jump (2x more likely)
-  smokeTimer-=dt; if(smokeTimer<=0 && campfire){ smokeTimer=0.22+Math.random()*0.18;   // campfire smoke
-    spawnSmoke((campfire.x+0.5)*CELL+(Math.random()-0.5)*CELL*0.3, (campfire.y+0.4)*CELL); }
+  smokeTimer-=dt; if(smokeTimer<=0 && (campfire || (world.camps&&world.camps.length))){ smokeTimer=0.22+Math.random()*0.18;   // campfire smoke — every fire breathes
+    if(campfire) spawnSmoke((campfire.x+0.5)*CELL+(Math.random()-0.5)*CELL*0.3, (campfire.y+0.4)*CELL);
+    for(const cp of (world.camps||[])) spawnSmoke((cp.x+0.5)*CELL+(Math.random()-0.5)*CELL*0.3, (cp.y+0.4)*CELL); }
   for(const d of allDeer){ const ox=d.px, oy=d.py; updateDeer(d, dt);
     if(!d.dead && !d.gone) separate(d, dt);                                                 // don't stack on another creature's tile
     if(!d.dead && (Math.abs(d.px-ox)>0.001||Math.abs(d.py-oy)>0.001)) waterWake(d, dt); }   // creatures ripple when moving in water
@@ -6810,7 +7088,7 @@ document.addEventListener('keydown', (ev)=>{
   if(ev.key==='+'||ev.key==='=') zoomAt(canvas.width/2, canvas.height/2, 1.2);
   else if(ev.key==='-'||ev.key==='_') zoomAt(canvas.width/2, canvas.height/2, 1/1.2);
   else if(ev.key==='0') setDefaultView();
-  else if(ev.key==='r'||ev.key==='R'){ if(mapMode==='dungeon'){ mapMode='forest'; } savedDungeon=null; savedForest=null;
+  else if(ev.key==='r'||ev.key==='R'){ if(mapMode!=='forest'){ mapMode='forest'; } savedDungeon=null; savedForest=null; for(const k in savedDens) delete savedDens[k];
     worldSeed=(Math.random()*2**31)>>>0; generateWorld();
     player.px=(SPAWN.x+0.5)*CELL; player.py=(SPAWN.y+0.5)*CELL; player.path=[]; player.targetCell=null;
     spawnHerd(); spawnHerd2(); spawnHerd3(); spawnGoblins(); spawnRoamers(); spawnTurtles(); setDefaultView(); }
@@ -6906,7 +7184,7 @@ function resetPlayerStats(){                         // fresh start: full HP, st
   if(player.cards==null) player.cards={};                  // cards are identity too — a death forgets nothing
   player.stamina=100; player.wood=10; player.club=0; player.bow=1; player.longbow=0; player.arrows=10; player.hoe=0; player.seeds=0; player.wheat=0; player.meat=0; player.jerky=0; player.meal=0;
   player.bucket=0; player.water=0; player.lantern=0;
-  if(mapMode==='dungeon') exitDungeon(false);   // a fresh hero wakes back in the forest
+  if(mapMode!=='forest') exitDungeon(false);   // a fresh hero wakes back in the forest
   player.skins=0; player.souls=0; player.guld=100; player.goblinKey=0; player.helmet=0; player.armor=0; player.leggings=0;
   player.equipMelee=null; player.equipRanged='bow';   // fresh hero sets out with a short bow equipped
   player.eqHelmet=1; player.eqArmor=1; player.eqLeggings=1;
@@ -7298,7 +7576,7 @@ function buildSnap(){
     if(!extras && g.kind!=='boss' && g.kind!=='king' && !nearAny(g.px!=null?g.px:(g.x+0.5)*CELL, g.py!=null?g.py:(g.y+0.5)*CELL)) continue;
     gob.push({ i:g.nid, k:g.kind, x:g.px, y:g.py, bx:g.x, by:g.y, f:g.face, l:g.faceLeft?1:0,
       d:g.dead?1:0, t:Math.round(g.deadT||0), h:g.hp, lo:g.looted?1:0, st:g.st, sw:+((g.swingT||0).toFixed(2)), pu:+((g.punchT||0).toFixed(2)), ca:+((g.castT||0).toFixed(2)), ho:+((g.hopAmt||0).toFixed(2)),
-      sk:g.srcKind||0, sa:g.antlers?1:0, sf:g.fawn?1:0 }); }
+      sk:g.srcKind||0, sa:g.antlers?1:0, sf:g.fawn?1:0, be:g.beast||0 }); }
   const sn={ t:'snap', players, wt:+(worldTime.toFixed(1)), gob, gobFull:extras?1:0, cv:cave.unlocked?1:0, rw:weather.raining?1:0 };
   if(withDeer){ const deer=[]; for(const d of allDeer){ if(d.gone) continue; d.nid=d.nid||net.nextNid++;
     if(!extras && !nearAny(d.px, d.py)) continue;
@@ -7322,6 +7600,7 @@ function buildSnap(){
     sn.pk=(mapMode==='dungeon'&&world.pickups)?world.pickups.map(p2=>p2.taken?1:0):null;
     sn.tf=(world.stumps||[]).map(s=>[s.x, s.y, Math.round(s.regrow)]);   // felled trees, so late joiners match the canopy
     sn.bags=(world.bags||[]).map(b=>[b.id, b.x, b.y, Math.round(b.age), b.items]);   // dropped bags, shared with everyone
+    sn.ch=(world.chests||[]).map(c=>[c.x, c.y, c.guld, c.open?1:0]);                 // chests of GULD — opened stays opened for all
   }
   return sn;
 }
@@ -7336,7 +7615,10 @@ function netApplySnap(m){                              // world portion of a sna
   }
   const seen=new Set();
   for(const s of m.gob){ seen.add(s.i); let g=goblins.find(o=>o.nid===s.i); if(!g){ g={nid:s.i, px:s.x, py:s.y}; goblins.push(g); }
+    const wasDead=!!g.dead;
     g.kind=s.k; g.nx=s.x; g.ny=s.y; g.x=s.bx; g.y=s.by; g.face=s.f; g.faceLeft=!!s.l; g.dead=!!s.d; g.deadT=s.t; g.gone=false;   // px/py glide toward nx/ny (netSmooth)
+    g.beast=s.be||null;
+    if(!wasDead && g.dead && g.kind==='witch') witchBoomFX(g.px, g.py);   // her end is the same green fire on every screen
     g.hp=s.h; g.looted=!!s.lo; g.st=s.st; g.swingT=s.sw; g.punchT=s.pu; g.castT=s.ca; g.hopAmt=s.ho; if(g.kind==='bigskel') g.big=true;
     g.srcKind=s.sk||null; g.antlers=!!s.sa; g.fawn=!!s.sf; }
   if(m.gobFull){ for(let i=goblins.length-1;i>=0;i--){ if(!seen.has(goblins[i].nid)) goblins.splice(i,1); } }
@@ -7348,6 +7630,11 @@ function netApplySnap(m){                              // world portion of a sna
       else { L.snapMiss=(L.snapMiss||0)+1;                                   // a snap already in flight may predate the stake…
         if(L.snapMiss<3) world.sites.push(L); } }                            // …keep showing ours a few beats, then accept the refusal
     if(siteUI.open && !siteById(siteUI.id)) siteUI.open=false; }
+  if(m.ch){ world.chests=world.chests||[];                                 // chest state is the host's word
+    m.ch.forEach((a2,i2)=>{ const c=world.chests[i2];
+      if(c){ c.x=a2[0]; c.y=a2[1]; c.guld=a2[2]; c.open=c.open||!!a2[3]; }
+      else world.chests[i2]={x:a2[0], y:a2[1], guld:a2[2], open:!!a2[3]}; });
+    world.chests.length=m.ch.length; }
   if(m.bags){ const locs=(world.bags||[]).filter(b=>b.loc);                // our optimistic drops
     const heldBag=bagUI.open?bagById(bagUI.id):null;
     world.bags=m.bags.map(a2=>({id:a2[0], x:a2[1], y:a2[2], age:a2[3], items:Object.assign({},a2[4]||{})}));
@@ -7404,11 +7691,11 @@ function netOnData(m, fromClient){
   if(!m||!m.t) return;
   const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1, wlob:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
-  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1, bagNew:1, bagTake:1};
+  const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1, bagNew:1, bagTake:1, chest:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
   if(MAP_FX[m.t] && m.map && m.map!==mapMode) return;   // effects on a map we're not looking at
   if(m.t==='wel'){ const prevSeed=(typeof worldSeed!=='undefined')?(worldSeed>>>0):null; const wasPlaying=(scene==='game');
-    if(mapMode==='dungeon') mapMode='forest'; savedDungeon=null; savedForest=null;
+    if(mapMode!=='forest') mapMode='forest'; savedDungeon=null; savedForest=null; for(const k in savedDens) delete savedDens[k];
     net.myId=m.id||1; worldSeed=(m.seed>>>0); generateWorld(); netClearWorldForGuest();
     spawnTurtles();                                   // turtles are ambience — each screen keeps its own basking in the shallows
     if(m.cv) setCaveUnlocked();
@@ -7435,7 +7722,7 @@ function netOnData(m, fromClient){
   else if(m.t==='dmg'){ if(net.mode==='host'){ const f=findByNid(m.nid); if(f && !creatureDead(f.kind,f.cr)) damageCreature(f.kind, f.cr, m.amount, true); } }
   else if(m.t==='hit'){ if(!player.dead) playerHit(m.amount, true, m.ignoreArmor); }
   else if(m.t==='afx'){ addParticle({ kind:m.bolt?'bolt':'arrow', x:m.x0, y:m.y0, x0:m.x0, y0:m.y0, tx:m.tx, ty:m.ty, t:0, dur:m.dur, life:99, max:99,
-    ang:Math.atan2(m.ty-m.y0, m.tx-m.x0), fx:true, mt:m.mt||0 }); }                                        // the other player's arrow, visual only
+    ang:Math.atan2(m.ty-m.y0, m.tx-m.x0), fx:true, fire:m.fire||0, mt:m.mt||0 }); }                                        // the other player's arrow, visual only
   else if(m.t==='vfx'){ net._vfxIn=true; try{ spawnBlood(m.x, m.y, m.n, !!m.big); }finally{ net._vfxIn=false; } }   // blood from the other side, visual only
   else if(m.t==='bfx'){ addParticle({kind:'boulder', x:m.x0, y:m.y0, x0:m.x0, y0:m.y0, tx:m.tx, ty:m.ty, t:0, dur:m.dur, life:99, max:99, arc:m.arc, fx:true}); }   // the boss's boulder, mirrored
   else if(m.t==='sfx'){ net._vfxIn=true; try{ spawnSoulFX(m.x, m.y, m.n); }finally{ net._vfxIn=false; } }   // the other player's soul harvest, mirrored
@@ -7446,6 +7733,7 @@ function netOnData(m, fromClient){
   else if(m.t==='mined'){ if(net.mode==='host' && mapMode==='dungeon' && world.rocks && world.rocks[m.i]){ const r=world.rocks[m.i];
     if(!r.gone){ r.gone=true; if(world.rockBlock) world.rockBlock.delete(gi(r.x,r.y)); } } }
   else if(m.t==='pick'){ if(net.mode==='host' && mapMode==='dungeon' && world.pickups && world.pickups[m.i]) world.pickups[m.i].taken=true; }
+  else if(m.t==='chest'){ if(net.mode==='host' && world.chests && world.chests[m.i]) world.chests[m.i].open=true; }   // a guest cracked it — it stays cracked
   else if(m.t==='cave'){ setCaveUnlocked(); }                                                   // partner turned the key — open for all
   else if(m.t==='loot'){ if(net.mode==='host'){ const f=findByNid(m.nid);                       // guest looted a carcass → strip it to bones here too
     if(f && f.kind==='deer' && f.cr.dead && !f.cr.gone && (f.cr.deadT||0)<DEER_FRESH_T) f.cr.deadT=DEER_FRESH_T; } }
