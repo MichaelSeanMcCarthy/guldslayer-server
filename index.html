@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · e';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · f';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1655,10 +1655,6 @@ function updateWitch(w, dt){
       goblinMove(w, WITCH_SPEED, dt); return;
     }
   }
-  if(w.homeX!=null && Math.hypot(cellOf(w.px)-w.homeX, cellOf(w.py)-w.homeY)>40){   // strayed — work back toward her haunt
-    if(!w.gpath.length) goblinPathTo(w, w.homeX, w.homeY, 1);
-    goblinMove(w, WITCH_SPEED, dt); return;
-  }
   if(w.gpath && w.gpath.length){ goblinMove(w, WITCH_SPEED, dt); return; }          // otherwise wander the map
   w.wanderCD=(w.wanderCD||0)-dt;
   if(w.wanderCD<=0){ if(goblinWander(w, 8, 24)) w.wanderCD=2+Math.random()*4; else w.wanderCD=1; }
@@ -1670,10 +1666,6 @@ function updateSkeleton(s, dt){        // tracks & punches the nearest player to
   const pd=Math.hypot(cellOf(s.px)-cellOf(T.px), cellOf(s.py)-cellOf(T.py));
   s.hopAmt=0;
   const reach=s.big?2:1.6, dmgS=s.big?8:5, spd=s.big?MOVE_SPEED*0.5:MOVE_SPEED*0.65;   // the dead SHAMBLE — slower than even a Half-Orc (0.84x), so anyone can outrun them
-  if(pd>20){                                                 // no prey near — the dead never march across the map
-    if(!leashHome(s, dt, spd*0.7)) s.gpath=[];
-    return;
-  }
   if(pd<=reach){
     s.gpath=[]; s.face=face8(T.px-s.px, T.py-s.py); s.faceLeft=T.px<s.px;
     s.atkCD=(s.atkCD||0)-dt;
