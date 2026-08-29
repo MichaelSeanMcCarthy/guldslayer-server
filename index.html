@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · d';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · e';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1267,7 +1267,10 @@ function spawnEastCamps(){                 // two SMALL goblin camps on the east
   world.camps=[];
   const rng=mulberry32((worldSeed ^ 0xC0FFEE)>>>0);      // seeded: every client lays the camps in the same clearings
   const minX=Math.max(4, (world.creekMaxX!=null?world.creekMaxX:0)+8);
-  const spawnPt={x:Math.floor(GRID*0.78), y:Math.floor(GRID/2)};      // players start on the east road
+  let spawnPt={x:Math.floor(GRID*0.78), y:Math.floor(GRID/2)};        // players start on the east road…
+  { const road=(world.pathDirt||[]); let best=null, bd=1e9; const targetX=Math.floor(GRID*0.78);
+    for(const rc of road){ const d=Math.abs(rc.x-targetX); if(d<bd){ bd=d; best=rc; } }
+    if(best) spawnPt={x:best.x, y:best.y}; }                          // …so measure from the road's ACTUAL cell
   const bushSet=new Set(world.bushes.map(b=>b.y*GRID+b.x));
   const clearAround=(p,rad)=>{ for(let dy=-rad;dy<=rad;dy++)for(let dx=-rad;dx<=rad;dx++){
     const x=p.x+dx, y=p.y+dy; if(!inGrid(x,y)||isBlocked(x,y)||bushSet.has(y*GRID+x)) return false; } return true; };
@@ -1296,7 +1299,7 @@ function spawnEastCamps(){                 // two SMALL goblin camps on the east
     // three goblins round the fire: a bow and two claws, homed here
     const trio=[[2,-1,'archer'],[-2,1,'claw'],[1,2,'claw']];
     for(const [dx,dy,kind] of trio){ const gx=c.x+dx, gy=c.y+dy;
-      goblins.push({ x:gx, y:gy, px:(gx+0.5)*CELL, py:(gy+0.5)*CELL, kind, faceLeft:dx>0, face:face8(-dx,-dy), size:1,
+      goblins.push({ x:gx, y:gy, px:(gx+0.5)*CELL, py:(gy+0.5)*CELL, kind, faceLeft:dx>0, face:face8(-dx,-dy), size:1, leash:15,
         hp:20, aggro:false, homeX:gx, homeY:gy, arrows:kind==='archer'?3:0, atkCD:0, gstate:'camp', gpath:[], chopTree:null, chopT:0,
         hopAmt:0, jumpCD:Math.random()*2, jT:null, jDur:0.45, bob:Math.random()*6.28, phase:Math.random()*6.28 }); }
     // the camp's plunder: a chest of GULD (placed once per world — a fresh hero can't re-loot it)
@@ -1313,11 +1316,11 @@ function makeRoamer(x,y,kind,leader){
     wanderCD:Math.random()*3, hopAmt:0, jumpCD:Math.random()*2, jT:null, jDur:0.45, bob:Math.random()*6.28, phase:Math.random()*6.28 };
 }
 function makeWitch(x,y){              // a hooded goblin witch who roams and raises the dead
-  return { x, y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'witch', size:1, faceLeft:false, face:'S',
+  return { x, y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'witch', size:1, faceLeft:false, face:'S', homeX:x, homeY:y,
     hp:16, gpath:[], repathG:0, wanderCD:Math.random()*2, raiseCD:5, boneTarget:null, pendingBones:null, castT:0, hopAmt:0 };
 }
 function makeSkeleton(x,y){           // a raised skeleton warrior: fast, punches, 5 HP
-  return { x, y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'skeleton', size:1, faceLeft:false, face:'S',
+  return { x, y, px:(x+0.5)*CELL, py:(y+0.5)*CELL, kind:'skeleton', size:1, faceLeft:false, face:'S', homeX:x, homeY:y,
     hp:5, atkCD:0, gpath:[], repathG:0, hopAmt:0, punchT:0 };
 }
 function respawnGoblins(){                 // the woods west of the river are never goblin-free for long: 5 slink back in
@@ -1468,11 +1471,21 @@ function coopHit(tp, amount, blood, ignoreArmor){       // apply an enemy's blow
   if(tp===player){ if(!player.dead) playerHit(amount, blood, ignoreArmor); }
   else if(typeof netHitRemote==='function') netHitRemote(tp, amount, ignoreArmor);
 }
+function leashHome(g, dt, spd){                 // a leashed goblin drifts back to its fire when idle or over-extended
+  if(g.homeX==null) return false;
+  const hd=Math.hypot(cellOf(g.px)-g.homeX, cellOf(g.py)-g.homeY);
+  if(hd<=2){ return false; }
+  g.repathG=(g.repathG||0)-dt;
+  if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, g.homeX, g.homeY, 1); g.repathG=0.8; }
+  goblinMove(g, spd||GOB_SPEED, dt); return true;
+}
+function pastLeash(g){ return g.leash!=null && g.homeX!=null && Math.hypot(cellOf(g.px)-g.homeX, cellOf(g.py)-g.homeY)>g.leash; }
 function updateMelee(g, dt){
   const boss=g.kind==='boss';
   const T=nearestFoe(g.px, g.py);
   const pd=Math.hypot(cellOf(g.px)-cellOf(T.px), cellOf(g.py)-cellOf(T.py));
   if(g.aggro && (T.dead || pd>16)) g.aggro=false;      // give up once the target is dead or far away
+  if(pastLeash(g)){ g.aggro=false; if(leashHome(g, dt)) return; }   // leashed goblins never range far from their fire
   if(!g.aggro){                                        // wary of town: unbloodied goblins keep clear of the shops
     if(inShopZone(cellOf(g.px), cellOf(g.py))){ leaveShops(g, dt); return; }
     if(pd<=8 && inShopZone(cellOf(T.px), cellOf(T.py))){                     // prey is safe in town — won't follow it in
@@ -1484,6 +1497,7 @@ function updateMelee(g, dt){
         speed=boss?MOVE_SPEED*0.6:wood?MOVE_SPEED*0.7:bear?MOVE_SPEED*0.55:wolf?MOVE_SPEED*1.15:MOVE_SPEED*0.9;   // wolves bite fast & shallow; the bear mauls slow & deep
   if(pd>(g.aggro?9999:8*aggroMulFor(T))){                     // not engaged — the Aggro arrows set how close is too close
     if(g.roamer && g.leader){ followLeader(g, dt); return; }  // roaming claw — trail its bow goblin
+    if(g.leash!=null && leashHome(g, dt)) return;             // a displaced camp goblin walks back first
     g.gpath=[]; goblinDance(g, dt); return;                   // camp goblin — mill at the fire
   }
   g.hopAmt=0;
@@ -1552,8 +1566,9 @@ function updateArcher(g, dt){
   }
   if(g.arrows<=0){                                           // out of arrows → seek a tree
     const t=nearestTree(g);
-    if(t){ const path=goblinChopApproach(g, t); if(path){ g.chopTree=t; g.gpath=path; g.gstate='chop'; g.chopT=0; return; } }
-    goblinDance(g, dt); return;                              // no tree reachable — mill about
+    const tooFar = t && g.leash!=null && g.homeX!=null && Math.hypot((t.x+1)-g.homeX, (t.y+1)-g.homeY)>g.leash;
+    if(t && !tooFar){ const path=goblinChopApproach(g, t); if(path){ g.chopTree=t; g.gpath=path; g.gstate='chop'; g.chopT=0; return; } }
+    goblinDance(g, dt); return;                              // no tree in range — mill about
   }
   if(g.aggro && (T.dead || pd>18)) g.aggro=false;            // give up once the target is dead or far away
   if(!g.aggro){                                              // wary of town: unbloodied archers keep clear of the shops
@@ -1569,6 +1584,7 @@ function updateArcher(g, dt){
     if(g.atkCD<=0){ g.atkCD=1.6; g.arrows--; fireGoblinArrow(g, T); }
     return;
   }
+  if(pastLeash(g)){ g.aggro=false; if(leashHome(g, dt)) return; }   // leashed archers never stalk beyond their ground
   if(pd<=20*aggroMulFor(T) && !T.dead){                      // spotted a player — hunt him down into firing range
     g.hopAmt=0; g.repathG=(g.repathG||0)-dt;
     if(!g.gpath.length || g.repathG<=0){ goblinPathTo(g, cellOf(T.px), cellOf(T.py), 1); g.repathG=0.4; }
@@ -1639,6 +1655,10 @@ function updateWitch(w, dt){
       goblinMove(w, WITCH_SPEED, dt); return;
     }
   }
+  if(w.homeX!=null && Math.hypot(cellOf(w.px)-w.homeX, cellOf(w.py)-w.homeY)>40){   // strayed — work back toward her haunt
+    if(!w.gpath.length) goblinPathTo(w, w.homeX, w.homeY, 1);
+    goblinMove(w, WITCH_SPEED, dt); return;
+  }
   if(w.gpath && w.gpath.length){ goblinMove(w, WITCH_SPEED, dt); return; }          // otherwise wander the map
   w.wanderCD=(w.wanderCD||0)-dt;
   if(w.wanderCD<=0){ if(goblinWander(w, 8, 24)) w.wanderCD=2+Math.random()*4; else w.wanderCD=1; }
@@ -1650,6 +1670,10 @@ function updateSkeleton(s, dt){        // tracks & punches the nearest player to
   const pd=Math.hypot(cellOf(s.px)-cellOf(T.px), cellOf(s.py)-cellOf(T.py));
   s.hopAmt=0;
   const reach=s.big?2:1.6, dmgS=s.big?8:5, spd=s.big?MOVE_SPEED*0.5:MOVE_SPEED*0.65;   // the dead SHAMBLE — slower than even a Half-Orc (0.84x), so anyone can outrun them
+  if(pd>20){                                                 // no prey near — the dead never march across the map
+    if(!leashHome(s, dt, spd*0.7)) s.gpath=[];
+    return;
+  }
   if(pd<=reach){
     s.gpath=[]; s.face=face8(T.px-s.px, T.py-s.py); s.faceLeft=T.px<s.px;
     s.atkCD=(s.atkCD||0)-dt;
