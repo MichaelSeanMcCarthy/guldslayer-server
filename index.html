@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · d';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · e';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -633,7 +633,8 @@ let simRemoteOnly=false;                                // true while ticking a 
 function tickWorld(dt){                                 // world-side simulation (no local-player systems)
   updateGoblins(dt); updateBushes(dt); updateCrops(dt); updateStumps(dt); updateFelling(dt);
   for(const d of allDeer){ updateDeer(d, dt); if(!d.dead && !d.gone) separate(d, dt); }
-  if(pendingDeer.length){ for(const nd of pendingDeer) if(allDeer.length<DEER_CAP) allDeer.push(nd); pendingDeer.length=0; }
+  cullGoneDeer();
+  if(pendingDeer.length){ for(const nd of pendingDeer) if(aliveDeerN()<DEER_CAP) allDeer.push(nd); pendingDeer.length=0; }
   for(const t of turtles) updateTurtle(t, dt);
   if(mapMode==='forest'){
     if(!allDeer.some(d=>!d.dead && !d.gone)){ herdRespawnT+=dt; if(herdRespawnT>=300){ herdRespawnT=0; respawnHerd(); } }
@@ -3831,6 +3832,8 @@ function buckCharge(d, dt, pd){                   // aggressive buck: charge in,
   }
 }
 function deerDies(d){ d.dead=true; d.state='dead'; d.path=[]; d.deadT=0; d.gone=false; }
+function aliveDeerN(){ let n=0; for(const d of allDeer) if(!d.dead&&!d.gone) n++; return n; }   // the cap counts the LIVING —
+function cullGoneDeer(){ for(let i=allDeer.length-1;i>=0;i--) if(allDeer[i].gone) allDeer.splice(i,1); }   // — rotted ghosts must not jam the herd's births forever
 function nursingChild(d){ for(const f of allDeer){ if(f.leader===d && f.fawn && !f.dead && f.state==='eat') return f; } return null; }
 // --- lifecycle: a fawn that survives 5 min grows into a doe ---
 function matureFawn(f){
@@ -3841,7 +3844,7 @@ function matureFawn(f){
 }
 // --- a pregnant doe gives birth: a new fawn appears beside her ---
 function birthFawn(mom){
-  if(allDeer.length + pendingDeer.length >= DEER_CAP) return;
+  if(aliveDeerN() + pendingDeer.length >= DEER_CAP) return;   // count the living, not every corpse that ever was
   const c=nearestOpen(cellOf(mom.px), cellOf(mom.py)) || {x:cellOf(mom.px), y:cellOf(mom.py)};
   const nf=makeDeer(mom, false, C_FAWN, 0.54);
   nf.fawn=true; nf.followDist=FAWN_FOLLOW; nf.hp=1; nf.age=0;
@@ -6970,7 +6973,7 @@ function respawnHerd(){                      // a fresh little herd wanders in e
   for(let i=0;i<3;i++){ const d=makeDeer(nb, false, C_DOE, 0.81);
     const c=nearestOpen(bc.x+((Math.random()*7)|0)-3, bc.y+((Math.random()*7)|0)-3) || bc;
     d.px=(c.x+0.5)*CELL; d.py=(c.y+0.5)*CELL; herd.push(d); }
-  for(const d of herd){ if(allDeer.length<DEER_CAP){ allDeer.push(d); deerWander(d); } }
+  for(const d of herd){ if(aliveDeerN()<DEER_CAP){ allDeer.push(d); deerWander(d); } }
 }
 function updateCamFollow(dt){                     // glide the camera after the hero (a drag pauses it; moving resumes it)
   if(!camFollow || player.dead) return;
@@ -7045,7 +7048,8 @@ function loop(ts){
   for(const d of allDeer){ const ox=d.px, oy=d.py; updateDeer(d, dt);
     if(!d.dead && !d.gone) separate(d, dt);                                                 // don't stack on another creature's tile
     if(!d.dead && (Math.abs(d.px-ox)>0.001||Math.abs(d.py-oy)>0.001)) waterWake(d, dt); }   // creatures ripple when moving in water
-  if(pendingDeer.length){ for(const nd of pendingDeer) if(allDeer.length<DEER_CAP) allDeer.push(nd); pendingDeer.length=0; }  // add newborn fawns
+  cullGoneDeer();
+  if(pendingDeer.length){ for(const nd of pendingDeer) if(aliveDeerN()<DEER_CAP) allDeer.push(nd); pendingDeer.length=0; }  // add newborn fawns
   // herd & goblin renewal only applies to the forest above ground
   if(mapMode==='forest'){
     if(!allDeer.some(d=>!d.dead && !d.gone)){ herdRespawnT+=dt; if(herdRespawnT>=300){ herdRespawnT=0; respawnHerd(); } }
