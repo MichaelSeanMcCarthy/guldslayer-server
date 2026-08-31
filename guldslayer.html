@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · e';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · f';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -5231,9 +5231,9 @@ function draw(){
   }
   for(const s2 of (world.sites||[])) items.push({wx:(s2.tx*TILE+BUILDINGS[s2.kind].tiles*TILE/2)*CELL, wy:(s2.ty*TILE+BUILDINGS[s2.kind].tiles*TILE)*CELL, kind:29, ref:s2});   // build sites
   for(const b2 of (world.bags||[])) items.push({wx:(b2.x+0.5)*CELL, wy:(b2.y+1)*CELL, kind:30, ref:b2});   // dropped bags
-  for(const w2 of (world.wells||[]))  items.push({wx:(w2.tx*TILE+1.5)*CELL, wy:(w2.ty*TILE+2.8)*CELL, kind:31, ref:w2});   // wells
-  for(const f2 of (world.fences||[])) items.push({wx:(f2.tx*TILE+1.5)*CELL, wy:(f2.ty*TILE+2.8)*CELL, kind:32, ref:f2});   // fences
-  for(const g3 of (world.gates||[]))  items.push({wx:(g3.tx*TILE+1.5)*CELL, wy:(g3.ty*TILE+2.8)*CELL, kind:33, ref:g3});   // gates
+  for(const w2 of (world.wells||[]))  items.push({wx:(w2.tx*TILE+1.5)*CELL, wy:(w2.ty*TILE+2.8)*CELL, kind:34, ref:w2});   // wells (34-36: the chests & den mouths took 31-32)
+  for(const f2 of (world.fences||[])) items.push({wx:(f2.tx*TILE+1.5)*CELL, wy:(f2.ty*TILE+2.8)*CELL, kind:35, ref:f2});   // fences
+  for(const g3 of (world.gates||[]))  items.push({wx:(g3.tx*TILE+1.5)*CELL, wy:(g3.ty*TILE+2.8)*CELL, kind:36, ref:g3});   // gates
   for(const p of world.shopProps) items.push({wx:(p.x+0.5)*CELL, wy:(p.y+0.9)*CELL, kind:11, ref:p});   // barrels & crates
   for(const [key,c] of world.crops){ if(c.stage==='wheat'){ const x=key%GRID, y=(key/GRID)|0;
     items.push({wx:(x+0.5)*CELL, wy:(y+0.95)*CELL, kind:12, cell:{x,y}}); } }   // grown wheat (9 stalks per plot)
@@ -5321,9 +5321,9 @@ function draw(){
     else if(it.kind===30) drawBag(it.ref);
     else if(it.kind===31) drawChest(s, it.ref);
     else if(it.kind===32) drawDenMouth(s, it.ref);
-    else if(it.kind===31) drawWell(s);
-    else if(it.kind===32) drawFence(s, it.ref);
-    else if(it.kind===33) drawGate(s, it.ref);
+    else if(it.kind===34) drawWell(s);
+    else if(it.kind===35) drawFence(s, it.ref);
+    else if(it.kind===36) drawGate(s, it.ref);
     else if(it.kind===28) drawButcher(s);
     else if(it.kind===14) drawArmorShop(s);
     else if(it.kind===10) drawTurtle(s, it.ref);
