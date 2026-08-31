@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · f';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-28 · g';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1919,9 +1919,9 @@ function updatePlayer(dt){
       }
       player.goCave=false; }
     if(player.goDen){ const dn=(world.dens||[]).find(d3=>d3.id===player.goDen); player.goDen=null;
-      if(dn && Math.abs(cellOf(player.px)-dn.door.x)<=2 && Math.abs(cellOf(player.py)-dn.door.y)<=2) enterDen(dn.id); }
+      if(dn && Math.abs(cellOf(player.px)-dn.door.x)<=3 && Math.abs(cellOf(player.py)-dn.door.y)<=4) enterDen(dn.id); }   // tile-centre walking stops a stride short — the mouth still swallows you
     if(player.goChest!=null){ const c3=(world.chests||[])[player.goChest]; const ci=player.goChest; player.goChest=null;
-      if(c3 && Math.abs(cellOf(player.px)-c3.x)<=1 && Math.abs(cellOf(player.py)-c3.y)<=1) openChest(ci); }
+      if(c3 && Math.abs(cellOf(player.px)-c3.x)<=2 && Math.abs(cellOf(player.py)-c3.y)<=2) openChest(ci); }
     if(player.goExit){ const e2=dungeon.exit;
       if(mapMode!=='forest' && Math.abs(cellOf(player.px)-e2.x)<=1 && Math.abs(cellOf(player.py)-e2.y)<=1) exitDungeon(true);
       player.goExit=false; }
@@ -3445,6 +3445,10 @@ function onTapWorld(wx,wy){
     player.harvestTarget=null; player.carcassTarget=null; player.soulTarget=null; player.propTarget=null;
     pathToCell(cellOf(rp.px), cellOf(rp.py)+1); return; }
   const cx=Math.max(0,Math.min(GRID-1,Math.floor(wx/CELL))), cy=Math.max(0,Math.min(GRID-1,Math.floor(wy/CELL)));
+  if(mapMode!=='forest' && Math.abs(cx-dungeon.exit.x)<=1 && Math.abs(cy-dungeon.exit.y)<=1){   // a tap ON the way out ALWAYS means leave —
+    player.goExit=true; player.attack=null; player.propTarget=null; player.soulTarget=null;     // no wolf on the hatch may steal it
+    player.chopTree=null; player.chopping=false; player.mineRock=null;
+    pathToCell(dungeon.exit.x, dungeon.exit.y-1); return; }
   if(player.tool==='hoe'){ tillOrUntill(cx,cy); return; }        // till / untill a crop plot
   if(player.tool==='seeds'){ plantSeeds(cx,cy); return; }        // sow wheat on a plot
   if(player.tool==='bucket'){ useBucket(cx,cy); return; }        // fill at a well / water a sown plot
@@ -3482,7 +3486,7 @@ function onTapWorld(wx,wy){
       pathToCell(dn.door.x, dn.door.y+1); return; } }
   { const chI=(world.chests||[]).findIndex(c2=>!c2.open && Math.abs(cx-c2.x)<=1 && Math.abs(cy-c2.y)<=1);
     if(chI>=0){ const c2=world.chests[chI];                                      // tapped a chest of GULD
-      if(Math.abs(cellOf(player.px)-c2.x)<=1 && Math.abs(cellOf(player.py)-c2.y)<=1) openChest(chI);
+      if(Math.abs(cellOf(player.px)-c2.x)<=2 && Math.abs(cellOf(player.py)-c2.y)<=2) openChest(chI);
       else { player.goChest=chI; player.attack=null; player.propTarget=null; player.chopTree=null; player.chopping=false;
         const d3=nearestOpen(c2.x, c2.y+1)||nearestOpen(c2.x,c2.y); if(d3) pathToCell(d3.x, d3.y); }
       return; } }
@@ -7614,8 +7618,9 @@ function buildSnap(){
   // Big-world diet: players+goblins ride every snap (20 Hz); deer every other snap (10 Hz);
   // bushes/crops/rocks — slow-changing bulk — only about once a second.
   net._snapN=(net._snapN||0)+1;
-  const extras = (animT - (net._lastEx!=null?net._lastEx:-9)) >= 1;
-  if(extras) net._lastEx=animT;
+  net._lastExM=net._lastExM||{};                       // one extras clock PER MAP — the forest must not starve the dens' full lists
+  const extras = (animT - (net._lastExM[mapMode]!=null?net._lastExM[mapMode]:-9)) >= 1;
+  if(extras) net._lastExM[mapMode]=animT;
   const withDeer = extras || (net._snapN%2)===0;
   const players=[packSelf()];
   for(const c of net.clients){ if(c.open && c.p.active) players.push(c.p); }
