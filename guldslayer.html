@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · g';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · h';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -3474,7 +3474,7 @@ function onTapWorld(wx,wy){
   if(player.tool==='axe'){
     const tree=treeAt(cx,cy);
     if(tree){ beginChop(tree); return; }
-    player.tool=null;                              // tapped ground with tool → deactivate
+    /* tapped bare ground — keep the axe in hand and just walk; deselect via the toolbar */
   } else if(player.tool==='club' || player.tool==='sword' || player.tool==='gaxe' || player.tool==='bow' || player.tool==='longbow'){
     const cr=creatureAt(wx,wy);
     if(cr){ startAttack(cr, player.tool==='bow'||player.tool==='longbow'); return; }   // hunt the tapped creature
