@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · c';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · d';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -6140,7 +6140,7 @@ function shopUIClick(cx,cy){
 const invUI = { open:false, tab:'weapons' };
 const SLOT_DEFS = [   // item() = what's worn/equipped; ghost() = owned but unequipped (shown dim, tap to put on); toggle() = slot tap
   { key:'helmet',  name:'Helmet',     item:()=> player.helmet&&player.eqHelmet ? 'helmet' : null,   ghost:()=> player.helmet&&!player.eqHelmet ? 'helmet' : null,   toggle(){ if(!player.helmet) return; if(player.eqHelmet){ if(!unequipRoom('helmet')) return; player.eqHelmet=0; } else player.eqHelmet=1; } },
-  { key:'armor',   name:'Body Armor',
+  { key:'armor',   name:'Chest',
     item:()=> player.chainmail&&player.eqChainmail ? 'chainmail' : (player.armor&&player.eqArmor ? 'armor' : null),
     ghost:()=> (player.chainmail&&!player.eqChainmail) ? 'chainmail' : (player.armor&&!player.eqArmor ? 'armor' : null),
     toggle(){                                            // one body piece at a time: chain or leather
