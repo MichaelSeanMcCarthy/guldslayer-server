@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-28 · g';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · a';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -1207,7 +1207,20 @@ function overloadFactor(){                          // 1 = walk free · 0.25 = s
 function packSlots(){ return player.pack==='large'?16 : player.pack==='medium'?12 : 8; }
 function packName(){ return player.pack==='large'?'Large Pack' : player.pack==='medium'?'Medium Pack' : 'Small Pack'; }
 function packWeight(){ let w=0; for(const k in ITEM_LBS) w+=(player[k]||0)*ITEM_LBS[k]; return Math.round(w*10)/10; }
-function packTypesUsed(){ let n=0; for(const k in ITEM_LBS) if((player[k]||0)>0) n++; return n; }
+const WORN_EQ={helmet:'eqHelmet', armor:'eqArmor', chainmail:'eqChainmail', leggings:'eqLeggings'};
+function equippedCount(k){                           // 1 while a copy of k is ON the hero — that copy lives outside the bag
+  if((player[k]||0)<=0) return 0;
+  if(player.equipMelee===k || player.equipRanged===k) return 1;
+  if(WORN_EQ[k] && player[WORN_EQ[k]]) return 1;
+  return 0;
+}
+function bagCount(k){ return Math.max(0, (player[k]||0)-equippedCount(k)); }
+function packTypesUsed(){ let n=0; for(const k in ITEM_LBS) if(bagCount(k)>0) n++; return n; }
+function unequipRoom(k){                             // putting a worn piece BACK in the bag needs a slot for its type
+  if(bagCount(k)>0) return true;                     // a spare copy already claims the slot
+  if(packTypesUsed()+1 <= packSlots()) return true;
+  packRefuse('No room in your pack!'); return false;
+}
 function canCarry(addLbs, newTypes){                 // null = fits; else the reason it doesn't
   if(packWeight()+addLbs > carryCap()+1e-9) return 'Your pack is too heavy!';
   if(newTypes>0 && packTypesUsed()+newTypes > packSlots()) return 'No room in your pack!';
@@ -6126,16 +6139,16 @@ function shopUIClick(cx,cy){
        appear for weapons EQUIPPED here. --- */
 const invUI = { open:false, tab:'weapons' };
 const SLOT_DEFS = [   // item() = what's worn/equipped; ghost() = owned but unequipped (shown dim, tap to put on); toggle() = slot tap
-  { key:'helmet',  name:'Helmet',     item:()=> player.helmet&&player.eqHelmet ? 'helmet' : null,   ghost:()=> player.helmet&&!player.eqHelmet ? 'helmet' : null,   toggle(){ if(player.helmet) player.eqHelmet=player.eqHelmet?0:1; } },
+  { key:'helmet',  name:'Helmet',     item:()=> player.helmet&&player.eqHelmet ? 'helmet' : null,   ghost:()=> player.helmet&&!player.eqHelmet ? 'helmet' : null,   toggle(){ if(!player.helmet) return; if(player.eqHelmet){ if(!unequipRoom('helmet')) return; player.eqHelmet=0; } else player.eqHelmet=1; } },
   { key:'armor',   name:'Body Armor',
     item:()=> player.chainmail&&player.eqChainmail ? 'chainmail' : (player.armor&&player.eqArmor ? 'armor' : null),
     ghost:()=> (player.chainmail&&!player.eqChainmail) ? 'chainmail' : (player.armor&&!player.eqArmor ? 'armor' : null),
     toggle(){                                            // one body piece at a time: chain or leather
-      if(player.chainmail&&player.eqChainmail) player.eqChainmail=0;
-      else if(player.armor&&player.eqArmor) player.eqArmor=0;
+      if(player.chainmail&&player.eqChainmail){ if(!unequipRoom('chainmail')) return; player.eqChainmail=0; }
+      else if(player.armor&&player.eqArmor){ if(!unequipRoom('armor')) return; player.eqArmor=0; }
       else if(player.chainmail){ player.eqChainmail=1; player.eqArmor=0; }
       else if(player.armor){ player.eqArmor=1; player.eqChainmail=0; } } },
-  { key:'leggings',name:'Leggings',   item:()=> player.leggings&&player.eqLeggings ? 'leggings' : null, ghost:()=> player.leggings&&!player.eqLeggings ? 'leggings' : null, toggle(){ if(player.leggings) player.eqLeggings=player.eqLeggings?0:1; } },
+  { key:'leggings',name:'Leggings',   item:()=> player.leggings&&player.eqLeggings ? 'leggings' : null, ghost:()=> player.leggings&&!player.eqLeggings ? 'leggings' : null, toggle(){ if(!player.leggings) return; if(player.eqLeggings){ if(!unequipRoom('leggings')) return; player.eqLeggings=0; } else player.eqLeggings=1; } },
   { key:'boots',   name:'Boots',      item:()=> null, ghost:()=> null, toggle(){} },
   { key:'gloves',  name:'Gloves',     item:()=> null, ghost:()=> null, toggle(){} },
   { key:'amulet',  name:'Amulet',     item:()=> null, ghost:()=> null, toggle(){} },
@@ -6143,10 +6156,12 @@ const SLOT_DEFS = [   // item() = what's worn/equipped; ghost() = owned but uneq
   { key:'ring2',   name:'Right Ring', item:()=> null, ghost:()=> null, toggle(){} },
   { key:'melee',   name:'Melee',      item:()=> (player.equipMelee  && player[player.equipMelee]>0)  ? player.equipMelee  : null,
     ghost:()=> !player.equipMelee ? (player.gaxe>0?'gaxe':player.sword>0?'sword':player.club>0?'club':null) : null,
-    toggle(){ player.equipMelee = player.equipMelee ? null : (player.gaxe>0?'gaxe':player.sword>0?'sword':player.club>0?'club':null); } },
+    toggle(){ if(player.equipMelee){ if(!unequipRoom(player.equipMelee)) return; player.equipMelee=null; }
+      else player.equipMelee=(player.gaxe>0?'gaxe':player.sword>0?'sword':player.club>0?'club':null); } },
   { key:'ranged',  name:'Ranged',     item:()=> (player.equipRanged && player[player.equipRanged]>0) ? player.equipRanged : null,
     ghost:()=> !player.equipRanged ? (player.longbow>0?'longbow':player.bow>0?'bow':null) : null,
-    toggle(){ player.equipRanged = player.equipRanged ? null : (player.longbow>0?'longbow':player.bow>0?'bow':null); } },
+    toggle(){ if(player.equipRanged){ if(!unequipRoom(player.equipRanged)) return; player.equipRanged=null; }
+      else player.equipRanged=(player.longbow>0?'longbow':player.bow>0?'bow':null); } },
 ];
 const WEAPON_DEFS = [
   { k:'club',    name:'Wooden Club',      dmg:'3-6',   slot:'melee'  },
@@ -6539,9 +6554,9 @@ function drawItemsTab(M){                              // everything carried: we
   _invTabs=tabs;
   const gy=ty+tabH+pad*0.5, cols=3, gW=(M.cw-pad*(cols-1)*0.4)/cols, gH=Math.max(56,52*DPR);
   const list = invUI.tab==='weapons'
-    ? WEAPON_DEFS.filter(w=>player[w.k]>0).map(w=>({kind:'weapon', def:w}))
+    ? WEAPON_DEFS.filter(w=>bagCount(w.k)>0).map(w=>({kind:'weapon', def:w}))               // equipped = on your hip, not in the bag
     : invUI.tab==='armor'
-    ? ARMOR_DEFS.filter(a=>player[a.k]>0).map(a=>({kind:'armor', def:a}))
+    ? ARMOR_DEFS.filter(a=>bagCount(a.k)>0).map(a=>({kind:'armor', def:a}))                 // worn = on your body, not in the bag
     : RESOURCE_DEFS.filter(([k])=>player[k]>0).map(([k,name])=>({kind:'res', k, name}));
   const cells=list.map((it,i)=>({ it, x:M.cx+(i%cols)*(gW+pad*0.4), y:gy+((i/cols)|0)*(gH+pad*0.4), w:gW, h:gH }));
   _invCells=cells;
@@ -6563,10 +6578,11 @@ function drawItemsTab(M){                              // everything carried: we
     const cf=Math.max(10, c.h*0.16);
     if(c.it.kind==='weapon'){
       const w=c.it.def, eq=(w.slot==='melee'?player.equipMelee:player.equipRanged)===w.k, wt=(player.magic[w.k]||0);
+      // eq here means "one of this kind is on the hero" — THIS cell is always the spare bag copy
       if(wt>0) circle(c.x+c.w*0.2, c.y+c.h*0.44, c.h*0.32, wt>=1?'rgba(255,150,50,.4)':'rgba(90,140,255,.35)');
       drawShopItemIcon(w.k, c.x+c.w*0.2, c.y+c.h*0.44, c.h*0.28);
       ctx.fillStyle=PAL.panelHi; ctx.textAlign='left'; ctx.textBaseline='middle';
-      const label=w.name+(player[w.k]>1?' ×'+player[w.k]:''), maxW=c.w*0.6;
+      const label=w.name+(bagCount(w.k)>1?' ×'+bagCount(w.k):''), maxW=c.w*0.6;
       let nfs=Math.round(cf); ctx.font='bold '+nfs+'px system-ui, sans-serif';
       while(nfs>8 && ctx.measureText(label).width>maxW){ nfs--; ctx.font='bold '+nfs+'px system-ui, sans-serif'; }   // shrink to fit the cell
       ctx.fillText(label, c.x+c.w*0.38, c.y+c.h*0.3);
@@ -6580,11 +6596,10 @@ function drawItemsTab(M){                              // everything carried: we
         ctx.font='bold '+tfs+'px system-ui, sans-serif';
         while(tfs>7 && ctx.measureText(tag).width>c.w-cf*0.8){ tfs--; ctx.font='bold '+tfs+'px system-ui, sans-serif'; }
         ctx.fillText(tag, c.x+c.w-cf*0.4, c.y+c.h*0.12); ctx.restore(); }
-      ctx.fillStyle=eq?'#7fd68a':PAL.dirt; ctx.font='bold '+Math.round(cf*0.9)+'px system-ui, sans-serif';
-      ctx.fillText(eq?'EQUIPPED':'tap to equip', c.x+c.w*0.42, c.y+c.h*0.8);
-      drawWeight(c, w.k, player[w.k]||1, 0.8);
-      if(eq){ ctx.strokeStyle='#7fd68a'; ctx.lineWidth=Math.max(2,DPR*2); ctx.strokeRect(c.x,c.y,c.w,c.h); }
-    } else if(c.it.kind==='armor'){
+      ctx.fillStyle=PAL.dirt; ctx.font='bold '+Math.round(cf*0.9)+'px system-ui, sans-serif';
+      ctx.fillText(eq?'spare (one equipped)':'tap to equip', c.x+c.w*0.42, c.y+c.h*0.8);
+      drawWeight(c, w.k, bagCount(w.k)||1, 0.8);
+          } else if(c.it.kind==='armor'){
       const a2=c.it.def, worn=!!player[a2.eq], at2=(player.magic[a2.k]||0);
       if(at2>0) circle(c.x+c.w*0.2, c.y+c.h*0.44, c.h*0.32, at2>=1?'rgba(255,150,50,.4)':'rgba(90,140,255,.35)');
       drawShopItemIcon(a2.k, c.x+c.w*0.2, c.y+c.h*0.44, c.h*0.28);
@@ -6633,8 +6648,8 @@ function menuUIClick(cx,cy){                           // one click handler for 
     if(_invTabs) for(const t of _invTabs){ if(inR(t)){ invUI.tab=t.key; return; } }
     if(_invCells) for(const c of _invCells){ if(!inR(c)) continue;
       if(c.it.kind==='weapon'){ const w=c.it.def;
-        if(w.slot==='melee')  player.equipMelee  = player.equipMelee===w.k ? null : w.k;   // tap toggles equip
-        else                  player.equipRanged = player.equipRanged===w.k ? null : w.k;
+        if(w.slot==='melee'){ if(player.equipMelee!==w.k)  player.equipMelee=w.k; }        // tap the bag copy to equip it
+        else                { if(player.equipRanged!==w.k) player.equipRanged=w.k; }       // (a spare of the worn kind stays put)
       } else if(c.it.kind==='armor'){ const a=c.it.def; player[a.eq]=player[a.eq]?0:1;
         if(a.k==='chainmail'&&player.eqChainmail) player.eqArmor=0;                        // chain and leather can't share the body
         if(a.k==='armor'&&player.eqArmor) player.eqChainmail=0; }
