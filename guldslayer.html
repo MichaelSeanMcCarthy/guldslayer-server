@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · a';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · b';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -6179,15 +6179,15 @@ const ARMOR_DEFS = [
 ];
 function invButtonBox(){ const s=Math.max(76, 56*DPR)*1.3; return { x:canvas.width-s*1.15, y:canvas.height-s*1.2, w:s, h:s }; }   // 30% larger, floating free
 /* --- THE HERO MENU: one satchel button, five views — Equipment · Inventory · Stats · Mind · Map --- */
-const menuUI={ open:false, tab:'equip' };
+const menuUI={ open:false, tab:'gear' };
 function menuLayout(){
   const W=canvas.width, H=canvas.height;
   const pw=Math.min(W*0.94, Math.max(680, 640*DPR)), ph=Math.min(H*0.9, Math.max(470, 450*DPR));
   const px=(W-pw)/2, py=(H-ph)/2, pad=pw*0.028;
   const mtH=Math.max(34,32*DPR), cs=Math.max(26,26*DPR);
   const closeBtn={ x:px+pw-pad*0.6-cs, y:py+pad*0.6+(mtH-cs)/2, w:cs, h:cs };
-  const names={ equip:'Equipment', items:'Inventory', stats:'Stats', cards:'Training', map:'Map' };
-  const keys=['equip','items','stats','cards','map'];
+  const names={ gear:'Gear', stats:'Stats', cards:'Training', map:'Map' };
+  const keys=['gear','stats','cards','map'];
   const tw=(closeBtn.x-pad*0.5-(px+pad))/keys.length;
   const tabs=keys.map((k,i)=>({ key:k, name:names[k], x:px+pad+i*tw, y:py+pad*0.6, w:tw-pad*0.22, h:mtH }));
   const cx=px+pad, cy=py+pad*0.6+mtH+pad*0.6, cw=pw-pad*2, ch=py+ph-pad-cy;
@@ -6416,8 +6416,7 @@ function drawMenuUI(){                                 // the hero menu \u2014 o
   ctx.font='bold '+Math.round(C.h*0.55)+'px system-ui, sans-serif'; ctx.fillText('\u2715', C.x+C.w/2, C.y+C.h/2);
   _invDropBtn=null; _invSlots=null; _invCells=null; _invTabs=null;
   if(menuUI.tab!=='cards') _cardRows=null;
-  if(menuUI.tab==='equip') drawEquipTab(M);
-  else if(menuUI.tab==='items') drawItemsTab(M);
+  if(menuUI.tab==='gear') drawGearTab(M);
   else if(menuUI.tab==='stats') drawStatsTab(M);
   else if(menuUI.tab==='cards') drawCardsTab(M);
   else if(menuUI.tab==='map') drawMapTab(M);
@@ -6499,13 +6498,22 @@ function drawMapTab(M){                                // the whole world, writ 
   ctx.save(); ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(2,DPR*1.8);
   ctx.beginPath(); ctx.roundRect(mx,my,sz,sz,8*DPR); ctx.stroke(); ctx.restore();
 }
+function drawGearTab(M){                               // equipment on the left, the bag on the right — one glance
+  const split=M.cw*0.37;
+  const ML=Object.assign({}, M, { cw:split-M.pad*0.6 });
+  const MR=Object.assign({}, M, { cx:M.cx+split+M.pad*0.6, cw:M.cw-split-M.pad*0.6 });
+  drawEquipTab(ML);
+  ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.10)'; ctx.lineWidth=Math.max(1.5,DPR*1.2);
+  ctx.beginPath(); ctx.moveTo(M.cx+split, M.cy+M.ch*0.02); ctx.lineTo(M.cx+split, M.cy+M.ch*0.98); ctx.stroke(); ctx.restore();
+  drawItemsTab(MR);
+}
 function drawEquipTab(M){                              // what's worn and wielded, the hero between the columns
-  const s=Math.min(M.cw*0.14, M.ch/5.8), rowH=s*1.12, sy=M.cy+(M.ch-5*rowH)/2+rowH*0.05;
+  const s=Math.min(M.cw*0.2, M.ch/6.4), rowH=s*1.24, sy=M.cy+(M.ch-5*rowH)/2+rowH*0.05;
   const colA=M.cx+M.cw*0.08, colB=M.cx+M.cw*0.92-s;
   const slots=[];
   for(let i=0;i<5;i++) slots.push({ def:SLOT_DEFS[i],   x:colA, y:sy+i*rowH, w:s, h:s });
   for(let i=0;i<5;i++) slots.push({ def:SLOT_DEFS[5+i], x:colB, y:sy+i*rowH, w:s, h:s });
-  const hero={ x:M.cx+M.cw/2, y:sy+rowH*4.1, u:Math.min(M.cw*0.16, M.ch*0.24) };
+  const hero={ x:M.cx+M.cw/2, y:sy+rowH*4.1, u:Math.min(M.cw*0.2, M.ch*0.24) };
   const sv=cam.scale, sf=player.face; cam.scale=hero.u/CELL; player.face='S';
   drawPerson({x:hero.x, y:hero.y}); cam.scale=sv; player.face=sf;
   _invSlots=slots;
@@ -6552,7 +6560,7 @@ function drawItemsTab(M){                              // everything carried: we
     ctx.fillText(t.name, t.x+t.w/2, t.y+t.h/2);
   }
   _invTabs=tabs;
-  const gy=ty+tabH+pad*0.5, cols=3, gW=(M.cw-pad*(cols-1)*0.4)/cols, gH=Math.max(56,52*DPR);
+  const gy=ty+tabH+pad*0.5, cols=(M.cw>Math.max(520,500*DPR)?3:2), gW=(M.cw-pad*(cols-1)*0.4)/cols, gH=Math.max(56,52*DPR);
   const list = invUI.tab==='weapons'
     ? WEAPON_DEFS.filter(w=>bagCount(w.k)>0).map(w=>({kind:'weapon', def:w}))               // equipped = on your hip, not in the bag
     : invUI.tab==='armor'
@@ -6641,9 +6649,8 @@ function menuUIClick(cx,cy){                           // one click handler for 
   for(const t of M.tabs){ if(inR(t)){ menuUI.tab=t.key;
     if(t.key==='cards'){ cardUI.unseen=0; cardUI.pulse=0; }              // looking at the Mind clears the badge
     return; } }
-  if(menuUI.tab==='equip' && _invSlots){
-    for(const sl of _invSlots){ if(inR(sl)){ sl.def.toggle(); return; } }   // tap a slot: unequip what's worn / put on what's owned
-  } else if(menuUI.tab==='items'){
+  if(menuUI.tab==='gear'){
+    if(_invSlots) for(const sl of _invSlots){ if(inR(sl)){ sl.def.toggle(); return; } }   // tap a slot: unequip what's worn / put on what's owned
     if(inR(_invDropBtn)){ menuUI.open=false; dropUI.open=true; dropUI.k=null; dropUI.n=1; return; }   // DROP → pick something to set down
     if(_invTabs) for(const t of _invTabs){ if(inR(t)){ invUI.tab=t.key; return; } }
     if(_invCells) for(const c of _invCells){ if(!inR(c)) continue;
