@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · f';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · g';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2120,7 +2120,7 @@ function completeSite(s){
   else if(s.kind==='fence') placeFenceAt(s.tx, s.ty);
   else if(s.kind==='gate') placeGateAt(s.tx, s.ty);
   const i=world.sites.indexOf(s); if(i>=0) world.sites.splice(i,1);
-  if(!DEDICATED) addFloat('The '+BUILDINGS[s.kind].name+' is built!', (x0+1.5)*CELL, y0*CELL, '#ffd44d');
+  if(!DEDICATED){ const nm=BUILDINGS[s.kind].name; addFloat((/^The /.test(nm)?nm:'The '+nm)+' is built!', (x0+1.5)*CELL, y0*CELL, '#ffd44d'); }   // no 'The The Butcher'
 }
 let _locSiteSeq=0;
 function confirmBuildSite(){
