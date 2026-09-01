@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · i';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · j';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -2612,7 +2612,7 @@ function updateChop(dt){
     } else {
       tree.hp=left;                                                        // wounded — its health bar appears
       if(typeof net!=='undefined' && net.mode!=='off' && net.connected)
-        netSend({t:'tdmg', map:'forest', x:tree.x, y:tree.y, hp:+left.toFixed(2)});   // everyone sees the wound
+        netSend({t:'tdmg', map:'forest', x:tree.x, y:tree.y, d:+dmg.toFixed(2)});   // send the BLOW, not the total — many axes on one tree add up
     }
   }
 }
@@ -3334,7 +3334,7 @@ function boltLand(x,y){                             // the strike itself — dam
   const t=treeAt(cellOf(x), cellOf(y));
   if(t){ t.hp=(t.hp==null?TREE_HP:t.hp)-RAIN.dmg;                                   // lightning wounds trees like everything else…
     if(t.hp<=0) fellTree(t, x+CELL);                                                // …and at 100 DMG the struck tree comes crashing down
-    else if(typeof net!=='undefined' && net.mode!=='off' && net.connected) netSend({t:'tdmg', map:'forest', x:t.x, y:t.y, hp:+t.hp.toFixed(2)}); }
+    else if(typeof net!=='undefined' && net.mode!=='off' && net.connected) netSend({t:'tdmg', map:'forest', x:t.x, y:t.y, d:RAIN.dmg}); }
 }
 function boltFX(x,y){ weather.flash=0.32;
   const segs=[]; let off=0; for(let i=0;i<7;i++){ segs.push(off); off+=(Math.random()-0.5)*CELL*2.2; }
@@ -7850,8 +7850,8 @@ function netOnData(m, fromClient){
     } else handleTrade(m); }
   else if(m.t==='tfell'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);           // another player's tree comes down HERE too
     if(t) fellTree(t, +m.fx||((t.x+1.5)*CELL), true); }
-  else if(m.t==='tdmg'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);            // another player's axe blow — the wound shows HERE too
-    if(t) t.hp=Math.max(0.1, Math.min(TREE_HP, +m.hp||0.1)); }
+  else if(m.t==='tdmg'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);            // another player's axe blow lands HERE too — damage is additive,
+    if(t) t.hp=Math.max(0.1, (t.hp==null?TREE_HP:t.hp)-(+m.d||0)); }                            // so two axes on one tree fell it in half the time (tfell does the felling)
   else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
   else if(m.t==='bagNew'){ if(net.mode==='host'){ const it2={};                                 // a guest set a bag down — sanitize and stake it
     for(const k2 in (m.items||{})){ if(DROPPABLE.indexOf(k2)>=0){ const v=m.items[k2]|0; if(v>0) it2[k2]=Math.min(v,99999); } }
