@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · h';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · i';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -150,7 +150,7 @@ const CARD_TIERS=[
   { name:'Legendary', sq:1, eff:1.70, share:3,  col:'#ffb84d' },
 ];
 const CARDS={
-  lumberjack:{ name:'Lumberjack', dom:'gathering', base:0.25, txt:v=>'Chop trees '+Math.round(v*100)+'% faster' },
+  lumberjack:{ name:'Lumberjack', dom:'gathering', base:0.25, txt:v=>'Axe blows strike '+Math.round(v*100)+'% harder' },
   swordsman: { name:'Swordsman',  dom:'melee',     base:0.15, txt:v=>'Melee blows +'+Math.round(v*100)+'% damage' },
   marksman:  { name:'Marksman',   dom:'ranged',    base:0.15, txt:v=>'Arrows +'+Math.round(v*100)+'% damage' },
   thickhide: { name:'Thick Hide', dom:'defence',   base:0.12, txt:v=>'Take '+Math.round(v*100)+'% less damage' },
@@ -1235,7 +1235,8 @@ let scene = 'title';                      // 'title' -> 'tavern' (character sele
 let tavernSeats = [];                     // per-frame hit boxes for the seated heroes
 let playAgainBtn = null;                  // hit box for the death-screen "Play Again" button
 const fallingTrees = [];                 // trees mid-topple: {x,y,ang,dir,t}
-const FALL_TIME = 1.1, CHOP_TIME = 10, STUMP_REGROW = 300;   // 10s to fell, 5 min regrow
+const FALL_TIME = 1.1, STUMP_REGROW = 300;                   // 5 min regrow
+const TREE_HP = 10, CHOP_DMG = 1, CHOP_SWING = 1.0;          // trees are HP-based: the axe lands one blow per second for 1 DMG (Lumberjack hits harder)
 
 /* --- goblins around a campfire (west of the river) --- */
 const goblins = [];   // {x,y, kind:'boss'|'claw'|'archer', faceLeft}
@@ -2549,7 +2550,7 @@ function chopApproach(tree){                       // nearest reachable neighbou
 }
 function beginChop(tree){
   const ap=chopApproach(tree); if(!ap) return false;
-  player.chopTree=tree; player.chopping=false; player.chopT=0; player.targetCell=null;
+  player.chopTree=tree; player.chopping=false; player.chopT=0; player.chipT=0; player.targetCell=null;   // first blow lands on arrival
   player.path = ap.path.map(c=>({x:(c.x+0.5)*CELL, y:(c.y+0.5)*CELL}));
   return true;
 }
@@ -2594,15 +2595,26 @@ function updateChop(dt){
   const pcx=cellOf(player.px), pcy=cellOf(player.py);
   if(!(pcx>=tree.x-2&&pcx<=tree.x+TILE+1 && pcy>=tree.y-2&&pcy<=tree.y+TILE+1)){ player.chopTree=null; return; }
   player.face = face4((tree.x+1.5)*CELL-player.px, (tree.y+1.5)*CELL-player.py);   // face the tree
-  player.chopping=true; player.chopT+=dt*(1+cardVal('lumberjack'));   // the Lumberjack card quickens the axe
-  // a swing lands about once a second — burst of chips on each hit
-  player.chipT-=dt; if(player.chipT<=0){ player.chipT=1.0; for(let i=0;i<7;i++) spawnChip((tree.x+1.5)*CELL, (tree.y+2.4)*CELL); }
-  if(player.chopT>=CHOP_TIME){
-    const err=canCarry(5*ITEM_LBS.wood, player.wood>0?0:1);
-    if(err){ packRefuse(err); player.chopTree=null; player.chopping=false; player.chopT=0; return; }   // too laden to haul the timber — the tree stands
-    startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi);
-    maybeWoodGoblin((tree.x+1.5)*CELL, (tree.y+2.2)*CELL);                 // sometimes something was LIVING in there
-    player.chopTree=null; player.chopping=false; player.chopT=0; }  // +5 wood
+  player.chopping=true;
+  // one blow lands per second — chips fly and the tree LOSES HP (the Lumberjack card hits harder)
+  player.chipT-=dt;
+  if(player.chipT<=0){
+    player.chipT=CHOP_SWING;
+    for(let i=0;i<7;i++) spawnChip((tree.x+1.5)*CELL, (tree.y+2.4)*CELL);
+    const dmg=CHOP_DMG*(1+cardVal('lumberjack'));
+    const left=(tree.hp==null?TREE_HP:tree.hp)-dmg;
+    if(left<=0){
+      const err=canCarry(5*ITEM_LBS.wood, player.wood>0?0:1);
+      if(err){ packRefuse(err); player.chopTree=null; player.chopping=false; player.chopT=0; return; }   // too laden to haul the timber — the tree stands, one blow from falling
+      startFell(tree); player.wood+=5; addFloat('+5 wood', player.px, player.py-CELL*1.5, PAL.plankHi);
+      maybeWoodGoblin((tree.x+1.5)*CELL, (tree.y+2.2)*CELL);               // sometimes something was LIVING in there
+      player.chopTree=null; player.chopping=false; player.chopT=0;         // +5 wood
+    } else {
+      tree.hp=left;                                                        // wounded — its health bar appears
+      if(typeof net!=='undefined' && net.mode!=='off' && net.connected)
+        netSend({t:'tdmg', map:'forest', x:tree.x, y:tree.y, hp:+left.toFixed(2)});   // everyone sees the wound
+    }
+  }
 }
 function fellTree(tree, fromWX, fromNet){            // topple a tree away from `fromWX` — EVERY player sees it fall
   invalidateWalk();
@@ -3319,7 +3331,10 @@ function boltLand(x,y){                             // the strike itself — dam
       Math.hypot(c.p.px-x, c.p.py-y)<R2){ try{ c.conn.send({t:'hit', amount:RAIN.dmg, ignoreArmor:false}); }catch(e){} } } }
   for(const d of allDeer){ if(!d.dead && !d.gone && Math.hypot(d.px-x, d.py-y)<R2) damageCreature('deer', d, RAIN.dmg); }
   for(const g of goblins){ if(!g.dead && !g.gone && Math.hypot((g.px||0)-x, (g.py||0)-y)<R2) damageCreature('goblin', g, RAIN.dmg); }
-  const t=treeAt(cellOf(x), cellOf(y)); if(t) fellTree(t, x+CELL);                  // a struck tree comes crashing down
+  const t=treeAt(cellOf(x), cellOf(y));
+  if(t){ t.hp=(t.hp==null?TREE_HP:t.hp)-RAIN.dmg;                                   // lightning wounds trees like everything else…
+    if(t.hp<=0) fellTree(t, x+CELL);                                                // …and at 100 DMG the struck tree comes crashing down
+    else if(typeof net!=='undefined' && net.mode!=='off' && net.connected) netSend({t:'tdmg', map:'forest', x:t.x, y:t.y, hp:+t.hp.toFixed(2)}); }
 }
 function boltFX(x,y){ weather.flash=0.32;
   const segs=[]; let off=0; for(let i=0;i<7;i++){ segs.push(off); off+=(Math.random()-0.5)*CELL*2.2; }
@@ -5254,7 +5269,7 @@ function draw(){
     for(const tp of world.tapestries) items.push({wx:(tp.x+0.5)*CELL, wy:(tp.y+0.95)*CELL, kind:25});
     items.push({wx:(dungeon.exit.x+0.5)*CELL, wy:(dungeon.exit.y+0.95)*CELL, kind:26});
   }
-  for(const t of world.trees)    items.push({wx:(t.x+1.5)*CELL, wy:(t.y+2.9)*CELL, kind:0, grow:t.grow});   // one 3m tile per tree, trunk at the tile's south-centre
+  for(const t of world.trees)    items.push({wx:(t.x+1.5)*CELL, wy:(t.y+2.9)*CELL, kind:0, grow:t.grow, ref:t});   // one 3m tile per tree, trunk at the tile's south-centre
   for(const s2 of world.stumps)  items.push({wx:(s2.x+1.5)*CELL, wy:(s2.y+2.6)*CELL, kind:7});
   for(const ft of fallingTrees)  items.push({wx:(ft.x+1.5)*CELL, wy:(ft.y+2.9)*CELL, kind:8, ref:ft});
   for(const b of world.bushes)   items.push({wx:(b.x+0.5)*CELL, wy:(b.y+0.5)*CELL, kind:1, grow:b.grow});
@@ -5301,7 +5316,14 @@ function draw(){
   for(const it of items){
     const s=worldToScreen(it.wx,it.wy);
     if(s.x<-200||s.x>W+200||s.y<-260||s.y>Hh+200) continue;   // cull off-screen
-    if(it.kind===0) drawTree(s, it.grow, it.wx, it.wy);
+    if(it.kind===0){ drawTree(s, it.grow, it.wx, it.wy);
+      const tr=it.ref;
+      if(tr && tr.hp!=null && tr.hp<TREE_HP){                                     // a WOUNDED tree wears its health bar; the unhurt show nothing
+        const u=CELL*cam.scale*(it.grow!=null?Math.max(0.4,Math.min(1,it.grow)):1);
+        const frac=Math.max(0, tr.hp/TREE_HP), bw=u*1.7, bh=Math.max(3, u*0.11), bx=s.x-bw/2, by=s.y-u*3.25;
+        rect(bx-1.5, by-1.5, bw+3, bh+3, 'rgba(15,10,8,.7)');
+        rect(bx, by, bw*frac, bh, frac>0.5?'#79c24c':frac>0.25?'#d4a02a':'#d43a2a');
+      } }
     else if(it.kind===1) drawBush(s, it.grow);
     else if(it.kind===2) drawCattail(s, it.phase);
     else if(it.kind===3){ const ps=worldToScreen(player.px, player.py); if(player.dead) drawDeadPlayer(ps); else drawPerson(ps); }   // real position; sorted in front of the tree
@@ -5429,26 +5451,15 @@ function drawMineTimer(){                          // countdown above an ore roc
   ctx.fillText(rem+'s', cx, y-h*0.5);
   ctx.restore();
 }
-function drawChopTimer(){
+function drawChopTimer(){                            // the tree's own health bar tells the story now — this just credits the card
   if(!player.chopTree || !player.chopping) return;
+  const lj=cardVal('lumberjack'); if(lj<=0) return;
   const tr=player.chopTree, u=CELL*cam.scale;
   const s=worldToScreen((tr.x+1.5)*CELL, (tr.y+2.9)*CELL);
-  const cx=s.x, w=Math.max(34, u*1.9), h=Math.max(6, u*0.26);
-  const y=s.y - u*4.2, x=cx-w/2;                                 // sit above the canopy
-  const p=Math.min(1, player.chopT/CHOP_TIME);
   ctx.save();
-  ctx.globalAlpha=0.9; rect(x-w*0.06, y-h*0.5, w*1.12, h*2.0, PAL.outside);   // panel
-  ctx.globalAlpha=1;
-  rect(x, y, w, h, PAL.shadow);                                  // empty track
-  rect(x, y, w*p, h, PAL.pGreen);                                // fill = progress
-  ctx.strokeStyle=PAL.trunk; ctx.lineWidth=Math.max(1,DPR); ctx.strokeRect(x,y,w,h);
-  const lj=cardVal('lumberjack');
-  const rem=Math.max(0, Math.ceil((CHOP_TIME - player.chopT)/(1+lj)));   // REAL seconds remaining — the Lumberjack card shows its work
-  ctx.fillStyle=PAL.target; ctx.font='bold '+Math.round(Math.max(11,u*0.42))+'px system-ui, sans-serif';
-  ctx.textAlign='center'; ctx.textBaseline='bottom';
-  ctx.fillText(rem+'s', cx, y-h*0.5);
-  if(lj>0){ ctx.fillStyle='#8fd07a'; ctx.font='bold '+Math.round(Math.max(9,u*0.3))+'px system-ui, sans-serif';
-    ctx.textBaseline='top'; ctx.fillText('Lumberjack +'+Math.round(lj*100)+'%', cx, y+h*1.6); }   // proof the card is paying
+  ctx.fillStyle='#8fd07a'; ctx.font='bold '+Math.round(Math.max(9,u*0.3))+'px system-ui, sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillText('Lumberjack +'+Math.round(lj*100)+'%', s.x, s.y - u*3.05);   // proof the card is paying, under the tree's bar
   ctx.restore();
 }
 function drawDrumstick(cx,cy,s){                   // a little chicken drumstick icon
@@ -7782,7 +7793,7 @@ function netApplySnap(m){                              // world portion of a sna
 function netClearWorldForGuest(){ goblins.length=0; allDeer.length=0; pendingDeer.length=0; pendingGoblins.length=0; turtles.length=0; }
 function netOnData(m, fromClient){
   if(!m||!m.t) return;
-  const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1, wlob:1};
+  const MAP_FX={vfx:1, afx:1, bfx:1, sfx:1, tfell:1, tdmg:1, wlob:1};
   if(net.mode==='host' && fromClient && (MAP_FX[m.t] || m.t==='cave')) netSendExcept(m, fromClient);   // relay a guest's effects (and cave-unlock) to the rest of the party
   const MAP_ACTIONS={dmg:1, mined:1, pick:1, loot:1, lootg:1, cropAct:1, siteNew:1, siteWood:1, wgob:1, bagNew:1, bagTake:1, chest:1};
   if(net.mode==='host' && MAP_ACTIONS[m.t] && m.map && m.map!==mapMode){ (net.otherQueue=net.otherQueue||[]).push(m); return; }   // handled when that map ticks
@@ -7839,6 +7850,8 @@ function netOnData(m, fromClient){
     } else handleTrade(m); }
   else if(m.t==='tfell'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);           // another player's tree comes down HERE too
     if(t) fellTree(t, +m.fx||((t.x+1.5)*CELL), true); }
+  else if(m.t==='tdmg'){ const t=(world.trees||[]).find(t2=>t2.x===m.x&&t2.y===m.y);            // another player's axe blow — the wound shows HERE too
+    if(t) t.hp=Math.max(0.1, Math.min(TREE_HP, +m.hp||0.1)); }
   else if(m.t==='wgob'){ if(net.mode==='host') spawnWoodGoblin(+m.x||0, +m.y||0); }             // a guest's felled tree shook one loose
   else if(m.t==='bagNew'){ if(net.mode==='host'){ const it2={};                                 // a guest set a bag down — sanitize and stake it
     for(const k2 in (m.items||{})){ if(DROPPABLE.indexOf(k2)>=0){ const v=m.items[k2]|0; if(v>0) it2[k2]=Math.min(v,99999); } }
