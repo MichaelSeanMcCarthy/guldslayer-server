@@ -50,7 +50,7 @@
    ============================================================================ */
 
 /* --- config --- */
-const BUILD = 'build 2026-08-31 · j';   // shown on the title screen — bump the letter on every deploy
+const BUILD = 'build 2026-08-31 · k';   // shown on the title screen — bump the letter on every deploy
 
 /* --- the t layer: progression engine (see the project doc claude/progression-system.md) ---
    Every scalar is authored as a normalized curve sampled at t = (level-1)/(CAP-1).
@@ -5511,27 +5511,6 @@ function drawInventory(){
   const r=Math.max(9, 11*DPR), x=r*1.6, ic=r*1.5;
   ctx.save(); ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.font='bold '+Math.round(r*1.7)+'px system-ui, sans-serif';
   let y=r*7.8;                                     // gap below the stamina meter before resources begin (the level bar lives top-right now)
-  for(const R2 of party){                          // each friend's portrait + hearts, above the resources
-    const ps=ic*2.3;
-    const im=(typeof RACE_FACES!=='undefined' && RACE_FACES[R2.race]) || (typeof hudFace!=='undefined'?hudFace:null);
-    if(im && im.complete && im.naturalWidth){
-      ctx.save(); if(R2.dead) ctx.globalAlpha=0.4;
-      ctx.drawImage(im, x-ic*0.25, y-ps*0.45, ps, ps); ctx.restore();
-    }
-    const hr=Math.max(5, r*0.62), hgap=hr*2.5, hx0=x+ps+hr*1.2, hcy=y+ic*0.42;
-    const N2=Math.ceil((R2.hpMax||HP_PER_HEART*5)/HP_PER_HEART), hp2=Math.max(0, R2.hp||0);
-    for(let i=0;i<N2;i++){ const hcx=hx0+i*hgap, base=i*HP_PER_HEART;
-      heart(hcx, hcy, hr, PAL.heartEmpty);
-      const fill=Math.max(0, Math.min(1, (hp2-base)/HP_PER_HEART));
-      heartBand(hcx, hcy, hr, 0, fill, PAL.heartFull);
-    }
-    let rowH=ic*2.3;
-    if((R2.map||'forest')!==mapMode){ ctx.fillStyle='rgba(244,231,207,.55)'; ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.font='italic '+Math.round(r*1.1)+'px system-ui, sans-serif';
-      ctx.fillText(R2.map==='dungeon'?'below, in the dungeon…':'above, in the forest…', hx0-hr, hcy+hr*2.6);
-      ctx.font='bold '+Math.round(r*1.7)+'px system-ui, sans-serif'; rowH=ic*2.9; }
-    y+=rowH;                                       // next friend (or resources) continue below
-  }
   if(player.wood){
     rect(x, y, ic*1.3, ic*0.42, PAL.trunk);                             // wood: two stacked logs
     rect(x+ic*0.22, y-ic*0.4, ic*1.3, ic*0.42, PAL.pWood);
@@ -5594,6 +5573,28 @@ function drawInventory(){
     drawResourceIcon('goblinKey', x+ic*0.55, y, ic*1.15);
     ctx.fillStyle=PAL.target; ctx.fillText('Goblin Key', x+ic*1.9, y);
     y+=ic*1.7;
+  }
+  if(party.length) y+=ic*0.5;                      // a breath between your goods and your friends
+  for(const R2 of party){                          // each friend's portrait + hearts, BELOW the resources
+    const ps=ic*2.3;
+    const im=(typeof RACE_FACES!=='undefined' && RACE_FACES[R2.race]) || (typeof hudFace!=='undefined'?hudFace:null);
+    if(im && im.complete && im.naturalWidth){
+      ctx.save(); if(R2.dead) ctx.globalAlpha=0.4;
+      ctx.drawImage(im, x-ic*0.25, y-ps*0.45, ps, ps); ctx.restore();
+    }
+    const hr=Math.max(5, r*0.62), hgap=hr*2.5, hx0=x+ps+hr*1.2, hcy=y+ic*0.42;
+    const N2=Math.ceil((R2.hpMax||HP_PER_HEART*5)/HP_PER_HEART), hp2=Math.max(0, R2.hp||0);
+    for(let i=0;i<N2;i++){ const hcx=hx0+i*hgap, base=i*HP_PER_HEART;
+      heart(hcx, hcy, hr, PAL.heartEmpty);
+      const fill=Math.max(0, Math.min(1, (hp2-base)/HP_PER_HEART));
+      heartBand(hcx, hcy, hr, 0, fill, PAL.heartFull);
+    }
+    let rowH=ic*2.3;
+    if((R2.map||'forest')!==mapMode){ ctx.fillStyle='rgba(244,231,207,.55)'; ctx.textAlign='left'; ctx.textBaseline='middle';
+      ctx.font='italic '+Math.round(r*1.1)+'px system-ui, sans-serif';
+      ctx.fillText(R2.map==='dungeon'?'below, in the dungeon…':'above, in the forest…', hx0-hr, hcy+hr*2.6);
+      ctx.font='bold '+Math.round(r*1.7)+'px system-ui, sans-serif'; rowH=ic*2.9; }
+    y+=rowH;                                       // next friend continues below
   }
   ctx.restore();          // (armor lives on the inventory screen now, not in this list)
 }
